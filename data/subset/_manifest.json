@@ -1,0 +1,77 @@
+{
+  "dataset_dir": "/Users/pvolbach/Desktop/Studium/Data Engineering/cybersecurity-log-analytics-platform/lanl_dataset",
+  "start_day": 0,
+  "end_day": 13,
+  "bg_host_range": [
+    1,
+    250
+  ],
+  "final_window_days": [
+    7,
+    13
+  ],
+  "redteam_anchor_hosts": [
+    "C17693",
+    "C18025",
+    "C19932",
+    "C22409"
+  ],
+  "extra_hosts": [],
+  "exclude_hosts": [],
+  "totals": {
+    "ingest_rows": 19771320,
+    "final_window_rows": 10502968,
+    "total_gzipped_bytes": 101411000
+  },
+  "sources": [
+    {
+      "source": "auth",
+      "path": "data/subset/auth.txt.gz",
+      "scanned_in_window": 239471628,
+      "rows_kept": 12364080,
+      "rows_kept_final_window": 6750422,
+      "uncompressed_bytes": 797911221,
+      "gzipped_bytes": 60564468,
+      "seconds": 179.8
+    },
+    {
+      "source": "proc",
+      "path": "data/subset/proc.txt.gz",
+      "scanned_in_window": 91269266,
+      "rows_kept": 3936948,
+      "rows_kept_final_window": 1984435,
+      "uncompressed_bytes": 126739269,
+      "gzipped_bytes": 16134923,
+      "seconds": 55.5
+    },
+    {
+      "source": "flows",
+      "path": "data/subset/flows.txt.gz",
+      "scanned_in_window": 114560974,
+      "rows_kept": 3459310,
+      "rows_kept_final_window": 1762543,
+      "uncompressed_bytes": 134513732,
+      "gzipped_bytes": 24658784,
+      "seconds": 81.9
+    },
+    {
+      "source": "dns",
+      "path": "data/subset/dns.txt.gz",
+      "scanned_in_window": 887976,
+      "rows_kept": 10982,
+      "rows_kept_final_window": 5568,
+      "uncompressed_bytes": 189854,
+      "gzipped_bytes": 48701,
+      "seconds": 0.6
+    },
+    {
+      "source": "redteam",
+      "path": "data/subset/redteam.txt.gz",
+      "rows_kept": 628,
+      "rows_kept_final_window": 579,
+      "rows_joinable": 628,
+      "uncompressed_bytes": 19200,
+      "gzipped_bytes": 4124
+    }
+  ]
+}
