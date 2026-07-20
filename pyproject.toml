@@ -1,0 +1,23 @@
+[project]
+name = "cybersecurity-log-analytics-platform"
+version = "0.1.0"
+description = "Batch-processing lakehouse for cybersecurity log analytics (LANL dataset)"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["lanl_dataset", "data"]
+
+[tool.ruff.lint]
+# pycodestyle (E/W), pyflakes (F), isort (I), pyupgrade (UP), bugbear (B)
+select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+# Make repo modules importable in tests without installing a package.
+pythonpath = [".", "scripts"]
+testpaths = ["tests"]
+markers = [
+    "e2e: end-to-end tests that require docker compose (deselect with '-m \"not e2e\"')",
+]
+addopts = "-ra"
