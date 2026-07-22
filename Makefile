@@ -21,7 +21,7 @@ test-unit: ## Run fast unit tests (no docker required)
 	pytest -m "not e2e"
 
 test-e2e: ## Verify Gold output in MinIO (run `make pipeline` first)
-	pytest -m e2e
+	pytest tests/e2e -m e2e
 
 build: ## Build all images (airflow, simulator, spark-processor)
 	docker compose --profile build build
@@ -36,7 +36,7 @@ pipeline: ## Build, start, and run daily_pipeline for day 0 end-to-end
 	bash scripts/e2e_pipeline.sh 0
 
 e2e: pipeline ## Run the full pipeline then verify Gold output
-	pytest -m e2e
+	pytest tests/e2e -m e2e
 
 clean: ## Remove local caches and generated data layers
 	rm -rf .pytest_cache .ruff_cache **/__pycache__ \
