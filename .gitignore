@@ -1,0 +1,45 @@
+# --- Secrets & local config ---
+.env
+secrets/
+*.pem
+*.key
+
+# --- Raw dataset (multi-GB, never committed) ---
+lanl_dataset/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Spark / Delta / data artifacts ---
+spark-warehouse/
+metastore_db/
+derby.log
+data/bronze/
+data/silver/
+data/gold/
+data/delivered/
+data/landing/
+
+# --- Airflow local state ---
+airflow/logs/
+airflow.db
+airflow.cfg
+webserver_config.py
+
+# --- IDE / OS ---
+.idea/
+.DS_Store
+*.swp

@@ -1,0 +1,162 @@
+# First thin vertical slice: MinIO + Airflow 3.3 (LocalExecutor) + Spark/Delta.
+
+x-airflow-common: &airflow-common
+  build: ./airflow
+  image: clap-airflow:dev
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-postgres:5432/${AIRFLOW_DB}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    # Airflow 3: workers talk to the API server (not the metadata DB directly).
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+    # Simple Auth Manager
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: "${AIRFLOW_ADMIN_USER}:admin"
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/auth/simple_auth_manager_passwords.json.generated
+    AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER}
+    AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+    # Wiring the DAG uses to launch task containers.
+    IMG_SIMULATOR: ${IMG_SIMULATOR}
+    IMG_SPARK: ${IMG_SPARK}
+    NETWORK_NAME: ${NETWORK_NAME}
+    HOST_PROJECT_DIR: ${HOST_PROJECT_DIR}
+    MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    LANDING_BUCKET: ${LANDING_BUCKET}
+    BRONZE_BUCKET: ${BRONZE_BUCKET}
+    SILVER_BUCKET: ${SILVER_BUCKET}
+    GOLD_BUCKET: ${GOLD_BUCKET}
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - airflow-logs:/opt/airflow/logs
+    - airflow-simple-auth:/opt/airflow/auth
+    - /var/run/docker.sock:/var/run/docker.sock
+  user: "${AIRFLOW_UID}:0"
+  group_add:
+    - "${DOCKER_GID}"
+  networks:
+    - platform-net
+
+services:
+  minio:
+    image: minio/minio:RELEASE.2024-09-22T00-33-43Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # console (debugging only)
+    volumes:
+      - minio-data:/data
+    networks:
+      - platform-net
+
+  # One-shot: wait for MinIO, create the layer buckets, then exit.
+  mc-init:
+    image: minio/mc:RELEASE.2024-09-16T17-43-14Z
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local ${MINIO_ENDPOINT} ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}; do
+        echo 'waiting for minio...'; sleep 2;
+      done &&
+      mc mb --ignore-existing local/${LANDING_BUCKET} &&
+      mc mb --ignore-existing local/${BRONZE_BUCKET} &&
+      mc mb --ignore-existing local/${SILVER_BUCKET} &&
+      mc mb --ignore-existing local/${GOLD_BUCKET} &&
+      echo 'buckets ready';
+      "
+    networks:
+      - platform-net
+
+  airflow-postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${AIRFLOW_DB}
+    volumes:
+      - airflow-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${AIRFLOW_DB_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - platform-net
+
+  airflow-init:
+    <<: *airflow-common
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+    entrypoint: >
+      /bin/bash -c "
+      mkdir -p /opt/airflow/auth &&
+      airflow db migrate &&
+      python -c \"import json,os; p='/opt/airflow/auth/simple_auth_manager_passwords.json.generated'; open(p,'w').write(json.dumps({os.environ['AIRFLOW_ADMIN_USER']: os.environ['AIRFLOW_ADMIN_PASSWORD']}))\" &&
+      echo 'simple auth password file ready'
+      "
+    restart: on-failure
+
+  airflow-api-server:
+    <<: *airflow-common
+    command: api-server
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-api-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-api-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # --- Task images (built, not run as services). Launched by the DAG. ---
+  lanl-simulator:
+    build: ./services/lanl-simulator
+    image: ${IMG_SIMULATOR}
+    profiles: ["build"]
+
+  spark-processor:
+    build: ./services/spark-processor
+    image: ${IMG_SPARK}
+    profiles: ["build"]
+
+volumes:
+  minio-data:
+  airflow-postgres-data:
+  airflow-logs:
+  airflow-simple-auth:
+
+networks:
+  platform-net:
+    name: ${NETWORK_NAME}

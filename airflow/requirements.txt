@@ -1,0 +1,3 @@
+# Slim image has no providers; docker provider is required for DockerOperator.
+# Version matches Airflow 3.3.0 constraints (Python 3.11).
+apache-airflow-providers-docker==4.5.7
