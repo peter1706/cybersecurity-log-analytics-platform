@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt test test-unit test-e2e up down clean
+.PHONY: help install lint fmt test test-unit test-e2e build up down pipeline e2e clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -20,14 +20,23 @@ test: test-unit
 test-unit: ## Run fast unit tests (no docker required)
 	pytest -m "not e2e"
 
-test-e2e: ## Run end-to-end tests (brequires docker compose)
-	pytest -m e2e
+test-e2e: ## Verify Gold output in MinIO (run `make pipeline` first)
+	pytest tests/e2e -m e2e
 
-up: ## Start the platform (added in Increment 1)
-	docker compose up -d
+build: ## Build all images (airflow, simulator, spark-processor)
+	docker compose --profile build build
 
-down: ## Stop the platform
+up: ## Start the core platform services
+	HOST_PROJECT_DIR=$$(pwd) docker compose up -d
+
+down: ## Stop the platform (keeps volumes)
 	docker compose down
+
+pipeline: ## Build, start, and run daily_pipeline for day 0 end-to-end
+	bash scripts/e2e_pipeline.sh 0
+
+e2e: pipeline ## Run the full pipeline then verify Gold output
+	pytest tests/e2e -m e2e
 
 clean: ## Remove local caches and generated data layers
 	rm -rf .pytest_cache .ruff_cache **/__pycache__ \
