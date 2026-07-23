@@ -29,10 +29,17 @@ for _ in $(seq 1 60); do
 done
 
 echo "==> Running pipeline stages for day=${DAY}"
+# `airflow tasks test` can exit 0 even when the task fails/retries, so inspect its
+# output for failure markers and abort at the offending stage instead of masking it.
 for task in simulate_day land_to_bronze bronze_to_silver silver_to_gold; do
   echo "--- $task ---"
-  docker compose exec -T airflow-scheduler \
-    airflow tasks test daily_pipeline "$task" "$LOGICAL_DATE"
+  output="$(docker compose exec -T airflow-scheduler \
+    airflow tasks test daily_pipeline "$task" "$LOGICAL_DATE" 2>&1)"
+  echo "$output"
+  if echo "$output" | grep -Eiq "Task failed with exception|Marking task as (FAILED|UP_FOR_RETRY)|new_state=(failed|up_for_retry)"; then
+    echo "==> Stage '$task' failed; aborting pipeline." >&2
+    exit 1
+  fi
 done
 
 echo "==> Pipeline complete. Gold output is in the '${GOLD_BUCKET:-gold}' bucket."

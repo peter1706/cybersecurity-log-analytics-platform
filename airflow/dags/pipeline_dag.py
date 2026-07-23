@@ -28,7 +28,7 @@ class _PlatformDockerOperator(DockerOperator):
 
     def __init__(self, *, settings: PipelineSettings, **kwargs):
         defaults = {
-            "docker_url": "unix://var/run/docker.sock",
+            "docker_url": "unix:///var/run/docker.sock",
             "network_mode": settings.network_name,
             "auto_remove": "success",
             "mount_tmp_dir": False,
