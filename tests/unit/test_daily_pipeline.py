@@ -32,13 +32,13 @@ def settings() -> PipelineSettings:
 
 
 def test_daily_pipeline_task_order_and_deps(settings):
-    """Assert the DAG graph matches expected defaults and dependencies.
+    """Assert the DAG graph matches expected defaults and per-source dependencies.
 
     Checks that build_daily_pipeline produces dag_id daily_pipeline, is
     unscheduled (manual trigger only), has catchup disabled, defaults params.day
-    to 0, registers exactly the four tasks
-    simulate_day -> land_to_bronze -> bronze_to_silver -> silver_to_gold, and
-    wires them in that linear order with no extra edges.
+    to 0, runs an independent simulate -> land_to_bronze -> bronze_to_silver chain
+    per source inside a group-namespaced TaskGroup, and adds a silver_to_gold step
+    for auth only.
     """
     dag = build_daily_pipeline(settings)
 
@@ -50,31 +50,42 @@ def test_daily_pipeline_task_order_and_deps(settings):
     assert dag.catchup is False
     assert dag.params["day"] == 0
 
-    expected = [
-        "simulate_day",
-        "land_to_bronze",
-        "bronze_to_silver",
-        "silver_to_gold",
-    ]
-    assert list(dag.task_dict) == expected
+    expected = set()
+    for source in ("auth", "proc", "flows", "dns"):
+        expected |= {
+            f"{source}.simulate",
+            f"{source}.land_to_bronze",
+            f"{source}.bronze_to_silver",
+        }
+    expected.add("auth.silver_to_gold")
+    assert set(dag.task_dict) == expected
 
-    assert dag.task_dict["simulate_day"].downstream_task_ids == {"land_to_bronze"}
-    assert dag.task_dict["land_to_bronze"].downstream_task_ids == {"bronze_to_silver"}
-    assert dag.task_dict["bronze_to_silver"].downstream_task_ids == {"silver_to_gold"}
-    assert dag.task_dict["silver_to_gold"].downstream_task_ids == set()
+    for source in ("auth", "proc", "flows", "dns"):
+        assert dag.task_dict[f"{source}.simulate"].downstream_task_ids == {
+            f"{source}.land_to_bronze"
+        }
+        assert dag.task_dict[f"{source}.land_to_bronze"].downstream_task_ids == {
+            f"{source}.bronze_to_silver"
+        }
+
+    # auth alone continues into Gold; the other sources stop at Silver.
+    assert dag.task_dict["auth.bronze_to_silver"].downstream_task_ids == {"auth.silver_to_gold"}
+    assert dag.task_dict["auth.silver_to_gold"].downstream_task_ids == set()
+    for source in ("proc", "flows", "dns"):
+        assert dag.task_dict[f"{source}.bronze_to_silver"].downstream_task_ids == set()
 
 
 def test_daily_pipeline_operator_wiring(settings):
     """Assert DockerOperator fields are taken from the injected settings.
 
-    For simulate_day: image, auth/day command, platform network, MinIO env
+    For auth.simulate: image, auth/day command, platform network, MinIO env
     forwarding, and the read-only bind of host data/subset into /data/subset.
-    For land_to_bronze: spark image, job command, and the full task_environment
-    dict passed through to the container.
+    For auth.land_to_bronze: spark image, job command, and the full
+    task_environment dict passed through to the container.
     """
     dag = build_daily_pipeline(settings)
 
-    simulate = dag.task_dict["simulate_day"]
+    simulate = dag.task_dict["auth.simulate"]
     assert simulate.image == "clap-lanl-simulator:test"
     assert simulate.command == ["--source", "auth", "--day", "{{ params.day }}"]
     assert simulate.network_mode == "platform-net"
@@ -82,7 +93,16 @@ def test_daily_pipeline_operator_wiring(settings):
     assert simulate.mounts[0]["Source"] == "/repo/data/subset"
     assert simulate.mounts[0]["Target"] == "/data/subset"
 
-    spark = dag.task_dict["land_to_bronze"]
+    spark = dag.task_dict["auth.land_to_bronze"]
     assert spark.image == "clap-spark-processor:test"
     assert spark.command == ["land_to_bronze", "--source", "auth", "--day", "{{ params.day }}"]
     assert spark.environment == settings.task_environment
+
+    flows_silver = dag.task_dict["flows.bronze_to_silver"]
+    assert flows_silver.command == [
+        "bronze_to_silver",
+        "--source",
+        "flows",
+        "--day",
+        "{{ params.day }}",
+    ]

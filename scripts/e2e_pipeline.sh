@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run the Increment 1 thin-slice pipeline end-to-end for one day, then leave the
-# stack up so the pytest e2e smoke test can verify the Gold output.
+# Run the pipeline end-to-end for one day across all sources, then leave the
+# stack up so the pytest e2e smoke test can verify the Silver/Gold output.
 #
 # Uses `airflow tasks test` to execute each stage synchronously and in order,
 # which is deterministic and avoids polling scheduler run state.
@@ -29,9 +29,17 @@ for _ in $(seq 1 60); do
 done
 
 echo "==> Running pipeline stages for day=${DAY}"
+# Each source lands through Silver; auth also builds Gold. Stages are ordered so
+# a source's Bronze precedes its Silver.
+tasks=()
+for source in auth proc flows dns; do
+  tasks+=("${source}.simulate" "${source}.land_to_bronze" "${source}.bronze_to_silver")
+done
+tasks+=("auth.silver_to_gold")
+
 # `airflow tasks test` can exit 0 even when the task fails/retries, so inspect its
 # output for failure markers and abort at the offending stage instead of masking it.
-for task in simulate_day land_to_bronze bronze_to_silver silver_to_gold; do
+for task in "${tasks[@]}"; do
   echo "--- $task ---"
   output="$(docker compose exec -T airflow-scheduler \
     airflow tasks test daily_pipeline "$task" "$LOGICAL_DATE" 2>&1)"
