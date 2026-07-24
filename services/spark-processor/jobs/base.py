@@ -2,8 +2,8 @@
 
 ``MedallionJob`` owns the shared read -> transform -> validate -> write lifecycle
 (a template method); each concrete job supplies only what differs. This is where
-cross-cutting concerns (checksum + lineage in Increment 5, retries/alerts in
-Increment 7) attach in one place instead of being copied per stage.
+cross-cutting concerns (checksum + lineage, retries/alerts) attach in one place
+instead of being copied per stage.
 """
 
 from abc import ABC, abstractmethod
@@ -107,7 +107,7 @@ class BronzeToSilverJob(MedallionJob):
 
 
 class SilverToGoldJob(MedallionJob):
-    """Job (c): Silver -> Gold (single-day window in Increment 1)."""
+    """Job (c): Silver -> Gold."""
 
     name = "silver_to_gold"
 
@@ -117,6 +117,8 @@ class SilverToGoldJob(MedallionJob):
         return self.spark.read.format("delta").load(path).where(F.col("day") == self.day)
 
     def transform(self, df: DataFrame) -> DataFrame:
+        if self.source.to_gold is None:
+            raise ValueError(f"source {self.source.name!r} has no Gold transform")
         return self.source.to_gold(df)
 
     def target_path(self) -> str:

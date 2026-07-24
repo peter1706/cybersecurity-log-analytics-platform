@@ -11,9 +11,10 @@ from docker.types import Mount
 from pipeline_settings import PipelineSettings, load_pipeline_settings
 
 from airflow.providers.docker.operators.docker import DockerOperator
-from airflow.sdk import DAG
+from airflow.sdk import DAG, TaskGroup
 
-SOURCE = "auth"
+SOURCES = ("auth", "proc", "flows", "dns")
+GOLD_SOURCES = ("auth",)
 DAY_TEMPLATE = "{{ params.day }}"
 
 DEFAULT_ARGS = {
@@ -45,13 +46,13 @@ class SimulatorOperator(_PlatformDockerOperator):
         self,
         *,
         settings: PipelineSettings,
-        source: str = SOURCE,
+        source: str,
         day: str = DAY_TEMPLATE,
         **kwargs,
     ):
         super().__init__(
             settings=settings,
-            task_id="simulate_day",
+            task_id="simulate",
             image=settings.img_simulator,
             command=["--source", source, "--day", day],
             mounts=[
@@ -74,7 +75,7 @@ class SparkJobOperator(_PlatformDockerOperator):
         *,
         settings: PipelineSettings,
         job: str,
-        source: str = SOURCE,
+        source: str,
         day: str = DAY_TEMPLATE,
         **kwargs,
     ):
@@ -88,12 +89,17 @@ class SparkJobOperator(_PlatformDockerOperator):
 
 
 def build_daily_pipeline(settings: PipelineSettings | None = None) -> DAG:
-    """Assemble and return the daily_pipeline DAG."""
+    """Assemble and return the daily_pipeline DAG.
+
+    Each source runs an independent landing -> Bronze -> Silver chain inside its
+    own TaskGroup; sources in GOLD_SOURCES additionally build a Gold feature
+    table. Task ids are namespaced by the group, e.g. ``auth.bronze_to_silver``.
+    """
     settings = settings or load_pipeline_settings()
 
     with DAG(
         dag_id="daily_pipeline",
-        description="Daily pipeline execution from auth landing -> Bronze -> Silver -> Gold",
+        description="Daily pipeline execution from landing -> Bronze -> Silver -> Gold",
         schedule=None,
         start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
         catchup=False,
@@ -101,11 +107,21 @@ def build_daily_pipeline(settings: PipelineSettings | None = None) -> DAG:
         params={"day": 0},
         tags=["clap"],
     ) as dag:
-        simulate_day = SimulatorOperator(settings=settings)
-        land_to_bronze = SparkJobOperator(settings=settings, job="land_to_bronze")
-        bronze_to_silver = SparkJobOperator(settings=settings, job="bronze_to_silver")
-        silver_to_gold = SparkJobOperator(settings=settings, job="silver_to_gold")
+        for source in SOURCES:
+            with TaskGroup(group_id=source):
+                simulate = SimulatorOperator(settings=settings, source=source)
+                land_to_bronze = SparkJobOperator(
+                    settings=settings, job="land_to_bronze", source=source
+                )
+                bronze_to_silver = SparkJobOperator(
+                    settings=settings, job="bronze_to_silver", source=source
+                )
+                simulate >> land_to_bronze >> bronze_to_silver
 
-        simulate_day >> land_to_bronze >> bronze_to_silver >> silver_to_gold
+                if source in GOLD_SOURCES:
+                    silver_to_gold = SparkJobOperator(
+                        settings=settings, job="silver_to_gold", source=source
+                    )
+                    bronze_to_silver >> silver_to_gold
 
     return dag
