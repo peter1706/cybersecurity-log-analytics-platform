@@ -128,4 +128,5 @@ class TestLoadPipelineSettings:
             "BRONZE_BUCKET",
             "SILVER_BUCKET",
             "GOLD_BUCKET",
+            "ROLLING_WINDOW_DAYS",
         ]

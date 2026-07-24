@@ -37,8 +37,8 @@ def test_daily_pipeline_task_order_and_deps(settings):
     Checks that build_daily_pipeline produces dag_id daily_pipeline, is
     unscheduled (manual trigger only), has catchup disabled, defaults params.day
     to 0, runs an independent simulate -> land_to_bronze -> bronze_to_silver chain
-    per source inside a group-namespaced TaskGroup, and adds a silver_to_gold step
-    for auth only.
+    per source inside a group-namespaced TaskGroup, and adds a single cross-source
+    silver_to_gold step fed by every source's Silver.
     """
     dag = build_daily_pipeline(settings)
 
@@ -57,7 +57,7 @@ def test_daily_pipeline_task_order_and_deps(settings):
             f"{source}.land_to_bronze",
             f"{source}.bronze_to_silver",
         }
-    expected.add("auth.silver_to_gold")
+    expected.add("silver_to_gold")
     assert set(dag.task_dict) == expected
 
     for source in ("auth", "proc", "flows", "dns"):
@@ -68,11 +68,12 @@ def test_daily_pipeline_task_order_and_deps(settings):
             f"{source}.bronze_to_silver"
         }
 
-    # auth alone continues into Gold; the other sources stop at Silver.
-    assert dag.task_dict["auth.bronze_to_silver"].downstream_task_ids == {"auth.silver_to_gold"}
-    assert dag.task_dict["auth.silver_to_gold"].downstream_task_ids == set()
-    for source in ("proc", "flows", "dns"):
-        assert dag.task_dict[f"{source}.bronze_to_silver"].downstream_task_ids == set()
+    # Every source's Silver feeds the single cross-source computer_features Gold job.
+    for source in ("auth", "proc", "flows", "dns"):
+        assert dag.task_dict[f"{source}.bronze_to_silver"].downstream_task_ids == {
+            "silver_to_gold"
+        }
+    assert dag.task_dict["silver_to_gold"].downstream_task_ids == set()
 
 
 def test_daily_pipeline_operator_wiring(settings):
@@ -106,3 +107,9 @@ def test_daily_pipeline_operator_wiring(settings):
         "--day",
         "{{ params.day }}",
     ]
+
+    # The single cross-source Gold job takes no --source.
+    features = dag.task_dict["silver_to_gold"]
+    assert features.image == "clap-spark-processor:test"
+    assert features.command == ["silver_to_gold", "--day", "{{ params.day }}"]
+    assert features.environment == settings.task_environment

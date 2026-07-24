@@ -29,6 +29,7 @@ x-airflow-common: &airflow-common
     BRONZE_BUCKET: ${BRONZE_BUCKET}
     SILVER_BUCKET: ${SILVER_BUCKET}
     GOLD_BUCKET: ${GOLD_BUCKET}
+    ROLLING_WINDOW_DAYS: ${ROLLING_WINDOW_DAYS:-7}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - airflow-logs:/opt/airflow/logs

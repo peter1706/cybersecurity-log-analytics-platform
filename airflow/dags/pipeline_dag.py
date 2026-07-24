@@ -14,7 +14,6 @@ from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.sdk import DAG, TaskGroup
 
 SOURCES = ("auth", "proc", "flows", "dns")
-GOLD_SOURCES = ("auth",)
 DAY_TEMPLATE = "{{ params.day }}"
 
 DEFAULT_ARGS = {
@@ -88,12 +87,30 @@ class SparkJobOperator(_PlatformDockerOperator):
         )
 
 
+class ComputerFeaturesOperator(_PlatformDockerOperator):
+    """Runs the cross-source Silver -> Gold job that builds ``computer_features``.
+
+    This is the single Gold step. It depends on every
+    source's Silver being ready.
+    """
+
+    def __init__(self, *, settings: PipelineSettings, day: str = DAY_TEMPLATE, **kwargs):
+        super().__init__(
+            settings=settings,
+            task_id="silver_to_gold",
+            image=settings.img_spark,
+            command=["silver_to_gold", "--day", day],
+            **kwargs,
+        )
+
+
 def build_daily_pipeline(settings: PipelineSettings | None = None) -> DAG:
     """Assemble and return the daily_pipeline DAG.
 
     Each source runs an independent landing -> Bronze -> Silver chain inside its
-    own TaskGroup; sources in GOLD_SOURCES additionally build a Gold feature
-    table. Task ids are namespaced by the group, e.g. ``auth.bronze_to_silver``.
+    own TaskGroup (task ids namespaced by the group, e.g. ``auth.bronze_to_silver``).
+    A single cross-source ``silver_to_gold`` step then joins every source's Silver
+    into the unified ``computer_features`` Gold table.
     """
     settings = settings or load_pipeline_settings()
 
@@ -107,6 +124,7 @@ def build_daily_pipeline(settings: PipelineSettings | None = None) -> DAG:
         params={"day": 0},
         tags=["clap"],
     ) as dag:
+        silver_tasks = []
         for source in SOURCES:
             with TaskGroup(group_id=source):
                 simulate = SimulatorOperator(settings=settings, source=source)
@@ -117,11 +135,12 @@ def build_daily_pipeline(settings: PipelineSettings | None = None) -> DAG:
                     settings=settings, job="bronze_to_silver", source=source
                 )
                 simulate >> land_to_bronze >> bronze_to_silver
+            silver_tasks.append(bronze_to_silver)
 
-                if source in GOLD_SOURCES:
-                    silver_to_gold = SparkJobOperator(
-                        settings=settings, job="silver_to_gold", source=source
-                    )
-                    bronze_to_silver >> silver_to_gold
+        # The unified per-computer feature table joins all sources, so this single
+        # Gold step waits for every source's Silver before running once per anchor day.
+        silver_to_gold = ComputerFeaturesOperator(settings=settings)
+        for silver_task in silver_tasks:
+            silver_task >> silver_to_gold
 
     return dag

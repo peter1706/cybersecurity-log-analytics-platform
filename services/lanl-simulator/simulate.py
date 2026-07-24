@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""lanl-simulator: replay one LANL source for one day into the MinIO landing zone.
+"""lanl-simulator: replay a LANL source for one day (or a range) into MinIO landing.
 
 The simulator is the external producer. It streams a source subset file
-(``data/subset/<source>.txt.gz``, header-less gzipped CSV), keeps only the rows
-whose derived day index matches the requested day, and uploads them verbatim
-(still gzip-compressed, source-native format) as a single object to the landing
-bucket:
+(``data/subset/<source>.txt.gz``, header-less gzipped CSV), keeps the rows whose
+derived day index matches the requested day (or falls in the requested
+``[--day, --day-end]`` range), and uploads them verbatim (still gzip-compressed,
+source-native format) as one object per day to the landing bucket:
 
     landing/<source>/day=<DD>/<source>-<DDD>.csv.gz
+
+A multi-day range (``--day-end``) is filtered in a single pass and seeds the
+history a Silver -> Gold rolling-window backfill needs.
 
 No typing or schema is applied here -- that happens at Bronze. Writing the bytes
 as received keeps the raw-landing checkpoint faithful to what a real producer
@@ -76,36 +79,40 @@ class LandingSimulator:
         """Return the local subset path for a source."""
         return os.path.join(self.subset_dir, f"{source}.txt.gz")
 
-    def filter_day(self, source: str, day: int) -> bytes:
-        """Return a gzip-compressed blob of the rows whose day == target day.
+    def filter_days(self, source: str, start: int, end: int) -> dict[int, bytes]:
+        """Return one gzip-compressed blob per day for the inclusive range.
 
-        Source files are time-sorted, so we stop as soon as we pass the day.
+        Reads the time-sorted source subset once, keeping rows whose derived day
+        falls in ``[start, end]`` and grouping them by day. Returns a mapping of
+        day -> gzip blob; days with no rows are simply absent. Stops reading as
+        soon as the stream passes ``end``.
         """
         src_path = self.source_path(source)
         if not os.path.exists(src_path):
             raise FileNotFoundError(f"source subset not found: {src_path}")
 
-        buf = io.BytesIO()
-        kept = 0
-        with gzip.GzipFile(fileobj=buf, mode="wb", mtime=0) as out:
-            with gzip.open(src_path, "rt", encoding="utf-8", newline="") as fh:
-                for line in fh:
-                    comma = line.find(",")
-                    if comma <= 0:
-                        continue
-                    d = self.day_of(line[:comma])
-                    if d > day:
-                        break
-                    if d < day:
-                        continue
-                    out.write((line if line.endswith("\n") else line + "\n").encode("utf-8"))
-                    kept += 1
-        if kept == 0:
-            raise ValueError(
-                f"no rows found for day {day} in {src_path}; check the subset day range"
-            )
-        print(f"  filtered {kept:,} rows for day {day}", flush=True)
-        return buf.getvalue()
+        lines_by_day: dict[int, list[str]] = {}
+        with gzip.open(src_path, "rt", encoding="utf-8", newline="") as fh:
+            for line in fh:
+                comma = line.find(",")
+                if comma <= 0:
+                    continue
+                d = self.day_of(line[:comma])
+                if d > end:
+                    break
+                if d < start:
+                    continue
+                lines_by_day.setdefault(d, []).append(line if line.endswith("\n") else line + "\n")
+
+        blobs: dict[int, bytes] = {}
+        for d, lines in lines_by_day.items():
+            buf = io.BytesIO()
+            with gzip.GzipFile(fileobj=buf, mode="wb", mtime=0) as out:
+                for line in lines:
+                    out.write(line.encode("utf-8"))
+            blobs[d] = buf.getvalue()
+            print(f"  filtered {len(lines):,} rows for day {d}", flush=True)
+        return blobs
 
     def ensure_bucket(self) -> None:
         """Create the landing bucket if it does not already exist."""
@@ -114,15 +121,51 @@ class LandingSimulator:
             self._client.create_bucket(Bucket=self.bucket)
             print(f"  created bucket {self.bucket}", flush=True)
 
-    def run(self, source: str, day: int) -> str:
-        """Filter one source/day and upload it to the landing bucket."""
-        key = self.object_key(source, day)
-        print(f"lanl-simulator: {source} day={day} -> s3://{self.bucket}/{key}", flush=True)
-        blob = self.filter_day(source, day)
+    def run(self, source: str, day: int, day_end: int | None = None) -> list[str]:
+        """Filter a source over one day or an inclusive range and upload each day.
+
+        With ``day_end`` unset (or equal to ``day``) this replays a single day,
+        preserving the original one-object-per-run behavior. With ``day_end >
+        day`` it replays the inclusive range ``[day, day_end]`` in a single pass,
+        uploading one landing object per day. Uploads are idempotent (fixed object
+        keys, fixed gzip mtime), so re-running overwrites the same objects.
+
+        A single-day request with no matching rows is an error; in a multi-day
+        range, days with no rows are skipped with a notice and only a range that
+        yields nothing at all is an error.
+        """
+        end = day if day_end is None else day_end
+        if end < day:
+            raise ValueError(f"--day-end ({end}) must be >= --day ({day})")
+
+        blobs = self.filter_days(source, day, end)
         self.ensure_bucket()
-        self._client.put_object(Bucket=self.bucket, Key=key, Body=blob)
-        print(f"  uploaded {len(blob):,} bytes", flush=True)
-        return key
+        keys: list[str] = []
+        for d in range(day, end + 1):
+            blob = blobs.get(d)
+            if blob is None:
+                if day == end:
+                    raise ValueError(
+                        f"no rows found for day {d} in {self.source_path(source)}; "
+                        "check the subset day range"
+                    )
+                print(f"  day {d}: no rows in subset, skipping", flush=True)
+                continue
+            key = self.object_key(source, d)
+            self._client.put_object(Bucket=self.bucket, Key=key, Body=blob)
+            print(
+                f"lanl-simulator: {source} day={d} -> s3://{self.bucket}/{key} "
+                f"({len(blob):,} bytes)",
+                flush=True,
+            )
+            keys.append(key)
+
+        if not keys:
+            raise ValueError(
+                f"no rows found for days {day}..{end} in {self.source_path(source)}; "
+                "check the subset day range"
+            )
+        return keys
 
 
 def main() -> None:
@@ -131,6 +174,13 @@ def main() -> None:
     parser.add_argument("--source", required=True, choices=SOURCES)
     parser.add_argument("--day", type=int, required=True)
     parser.add_argument(
+        "--day-end",
+        type=int,
+        default=None,
+        help="optional: replay the inclusive day range [--day, --day-end] "
+        "(seeds a rolling-window backfill in one pass)",
+    )
+    parser.add_argument(
         "--subset-dir",
         default=os.environ.get("SUBSET_DIR", "/data/subset"),
         help="directory holding <source>.txt.gz subset files",
@@ -138,7 +188,7 @@ def main() -> None:
     args = parser.parse_args()
 
     simulator = LandingSimulator.from_env(args.subset_dir)
-    simulator.run(args.source, args.day)
+    simulator.run(args.source, args.day, args.day_end)
 
 
 if __name__ == "__main__":
