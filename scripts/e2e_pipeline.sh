@@ -29,13 +29,15 @@ for _ in $(seq 1 60); do
 done
 
 echo "==> Running pipeline stages for day=${DAY}"
-# Each source lands through Silver; auth also builds Gold. Stages are ordered so
-# a source's Bronze precedes its Silver.
+# Each source lands through Silver; a single cross-source Gold step follows.
+# Stages are ordered so a source's Bronze precedes its Silver.
 tasks=()
 for source in auth proc flows dns; do
   tasks+=("${source}.simulate" "${source}.land_to_bronze" "${source}.bronze_to_silver")
 done
-tasks+=("auth.silver_to_gold")
+# Single cross-source Gold step: the unified computer_features table, built once
+# after every source's Silver.
+tasks+=("silver_to_gold")
 
 # `airflow tasks test` can exit 0 even when the task fails/retries, so inspect its
 # output for failure markers and abort at the offending stage instead of masking it.
