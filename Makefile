@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt test test-unit test-e2e build up down pipeline e2e clean
+.PHONY: help install lint fmt test test-unit test-e2e build up down pipeline backfill e2e clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -34,6 +34,9 @@ down: ## Stop the platform (keeps volumes)
 
 pipeline: ## Build, start, and run daily_pipeline for day 0 end-to-end
 	bash scripts/e2e_pipeline.sh 0
+
+backfill: ## Backfill days START..END (default 0..6) to seed the rolling window
+	bash scripts/backfill.sh $(START) $(END)
 
 e2e: pipeline ## Run the full pipeline then verify Gold output
 	pytest tests/e2e -m e2e

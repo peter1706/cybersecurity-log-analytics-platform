@@ -44,6 +44,15 @@ def bucket(layer: str) -> str:
     return os.environ.get(f"{layer.upper()}_BUCKET", layer)
 
 
+def rolling_window_days() -> int:
+    """Length of the Silver -> Gold rolling window in days.
+
+    Read from ``ROLLING_WINDOW_DAYS`` (default 7). Each Gold run aggregates the
+    anchor day plus the preceding ``N - 1`` days into one anchor-day partition.
+    """
+    return int(os.environ.get("ROLLING_WINDOW_DAYS", "7"))
+
+
 def landing_prefix(source: str, day: int) -> str:
     """s3a path to the landed objects for a source/day."""
     return f"s3a://{bucket('landing')}/{source}/day={day:02d}/"

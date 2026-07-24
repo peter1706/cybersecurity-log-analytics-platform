@@ -50,32 +50,67 @@ def auth_bronze_to_silver(df_bronze: DataFrame) -> DataFrame:
     return typed.select(*keep).dropDuplicates()
 
 
-def auth_silver_to_gold(df_silver: DataFrame) -> DataFrame:
-    """Aggregate Silver auth events into per-computer daily features.
+def auth_computer_features(df_silver: DataFrame) -> DataFrame:
+    """Per-computer auth features for the unified feature table, keyed by ``computer_id``.
 
-    - groups by ``day`` and destination computer (the host being authenticated
-      to) -- the entity whose behavior the downstream anomaly model scores
-    - counts total, successful, and failed authentications
-    - counts distinct source computers and distinct human (non-machine) users
-    - derives the failure rate (0.0 when there are no events)
+    Auth events are directional: the source computer plays the *outbound* role and
+    the destination computer the *inbound* role, so a computer accrues separate
+    ``auth_out_*`` and ``auth_in_*`` features. Failure rates are taken only over
+    events with a **known** outcome (``auth_success`` not null) and are left NULL
+    when there are none (undefined, per ML-NULL-2) -- distinct from a 0.0 rate.
+
+    Counts/distincts may be NULL here for a computer seen in only one role; the
+    cross-source assembler coalesces those to 0. Output columns:
+    ``computer_id`` plus the twelve ``auth_{out,in}_*`` features.
     """
-    grouped = df_silver.groupBy("day", F.col("dst_comp").alias("computer")).agg(
-        F.count(F.lit(1)).alias("auth_count"),
-        F.sum(F.when(F.col("auth_success") == F.lit(True), 1).otherwise(0)).alias(
-            "auth_success_count"
-        ),
-        F.sum(F.when(F.col("auth_success") == F.lit(False), 1).otherwise(0)).alias(
-            "auth_failure_count"
-        ),
-        F.countDistinct("src_comp").alias("distinct_src_comp"),
-        F.countDistinct(F.when(~F.col("src_user_is_machine"), F.col("src_user_name"))).alias(
-            "distinct_human_users"
-        ),
+    outbound = (
+        df_silver.groupBy(F.col("src_comp").alias("computer_id"))
+        .agg(
+            F.count(F.lit(1)).alias("auth_out_event_count"),
+            F.countDistinct("dst_comp").alias("auth_out_distinct_targets"),
+            F.countDistinct("src_user_name").alias("auth_out_distinct_users"),
+            F.countDistinct(F.when(~F.col("src_user_is_machine"), F.col("src_user_name"))).alias(
+                "auth_out_distinct_human_users"
+            ),
+            F.sum(F.when(F.col("auth_success") == F.lit(False), 1).otherwise(0)).alias(
+                "auth_out_failed_count"
+            ),
+            F.sum(F.when(F.col("auth_success").isNotNull(), 1).otherwise(0)).alias(
+                "_auth_out_known_count"
+            ),
+        )
+        .withColumn(
+            "auth_out_failure_rate",
+            F.when(
+                F.col("_auth_out_known_count") > 0,
+                F.col("auth_out_failed_count") / F.col("_auth_out_known_count"),
+            ),
+        )
+        .drop("_auth_out_known_count")
     )
-    return grouped.withColumn(
-        "auth_failure_rate",
-        F.when(
-            F.col("auth_count") > 0,
-            F.col("auth_failure_count") / F.col("auth_count"),
-        ).otherwise(F.lit(0.0)),
+    inbound = (
+        df_silver.groupBy(F.col("dst_comp").alias("computer_id"))
+        .agg(
+            F.count(F.lit(1)).alias("auth_in_event_count"),
+            F.countDistinct("src_comp").alias("auth_in_distinct_sources"),
+            F.countDistinct("dst_user_name").alias("auth_in_distinct_users"),
+            F.countDistinct(F.when(~F.col("dst_user_is_machine"), F.col("dst_user_name"))).alias(
+                "auth_in_distinct_human_users"
+            ),
+            F.sum(F.when(F.col("auth_success") == F.lit(False), 1).otherwise(0)).alias(
+                "auth_in_failed_count"
+            ),
+            F.sum(F.when(F.col("auth_success").isNotNull(), 1).otherwise(0)).alias(
+                "_auth_in_known_count"
+            ),
+        )
+        .withColumn(
+            "auth_in_failure_rate",
+            F.when(
+                F.col("_auth_in_known_count") > 0,
+                F.col("auth_in_failed_count") / F.col("_auth_in_known_count"),
+            ),
+        )
+        .drop("_auth_in_known_count")
     )
+    return outbound.join(inbound, on="computer_id", how="fullouter")
