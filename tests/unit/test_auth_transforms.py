@@ -25,9 +25,9 @@ class TestRawToBronze:
         assert collected[1]["day"] == 1  # time=86401 -> day 1
         assert collected[0]["source"] == "auth"
 
-    def test_rejects_unsupported_source(self, spark):
+    def test_rejects_unknown_source(self, spark):
         with pytest.raises(ValueError):
-            raw_to_bronze(_raw(spark, [("1", "", "", "", "", "", "", "", "")]), "proc")
+            raw_to_bronze(_raw(spark, [("1", "", "", "", "", "", "", "", "")]), "bogus")
 
 
 class TestBronzeToSilver:

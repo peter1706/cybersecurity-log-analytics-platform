@@ -1,40 +1,9 @@
-"""Pure DataFrame transforms for the auth pipeline.
-
-These functions take and return Spark DataFrames and contain **no I/O** (no
-Delta, no S3), so they can be unit-tested against a plain local SparkSession
-without MinIO or Delta. The I/O wrappers live in the ``*_to_*`` job modules.
-"""
+"""Auth (authentication event) transforms."""
 
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
-from .schemas import AUTH_COLUMNS, SECONDS_PER_DAY
-
-
-def _day_from_time(time_col: "F.Column") -> "F.Column":
-    """Derive the LANL day index from a seconds timestamp: (time - 1) // 86400."""
-    return F.floor((time_col.cast("long") - F.lit(1)) / F.lit(SECONDS_PER_DAY)).cast("int")
-
-
-def raw_to_bronze(df_raw: DataFrame, source: str) -> DataFrame:
-    """Assign column names to a header-less auth CSV and add source/day partitions.
-
-    Bronze keeps values verbatim (as strings).
-    """
-    if source != "auth":
-        raise ValueError(f"Currently supported source is 'auth', got {source!r}")
-    renamed = df_raw
-    for i, name in enumerate(AUTH_COLUMNS):
-        renamed = renamed.withColumnRenamed(f"_c{i}", name)
-    renamed = renamed.select(*AUTH_COLUMNS)
-    return renamed.withColumn("source", F.lit(source)).withColumn(
-        "day", _day_from_time(F.col("time"))
-    )
-
-
-def _split_user(col: "F.Column", part: int) -> "F.Column":
-    """Return the user (part=0) or domain (part=1) of a ``user@domain`` token."""
-    return F.split(col, "@").getItem(part)
+from ._common import _split_user
 
 
 def auth_bronze_to_silver(df_bronze: DataFrame) -> DataFrame:
@@ -84,8 +53,11 @@ def auth_bronze_to_silver(df_bronze: DataFrame) -> DataFrame:
 def auth_silver_to_gold(df_silver: DataFrame) -> DataFrame:
     """Aggregate Silver auth events into per-computer daily features.
 
-    The "computer" is the destination computer (the host being authenticated
-    to) -- the entity whose behavior the downstream anomaly model scores.
+    - groups by ``day`` and destination computer (the host being authenticated
+      to) -- the entity whose behavior the downstream anomaly model scores
+    - counts total, successful, and failed authentications
+    - counts distinct source computers and distinct human (non-machine) users
+    - derives the failure rate (0.0 when there are no events)
     """
     grouped = df_silver.groupBy("day", F.col("dst_comp").alias("computer")).agg(
         F.count(F.lit(1)).alias("auth_count"),
