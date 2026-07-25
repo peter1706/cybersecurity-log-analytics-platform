@@ -14,12 +14,11 @@ docker:
   img_spark: IMG_SPARK
   img_delivery: IMG_DELIVERY
   img_ml_mock: IMG_ML_MOCK
-  network_name: NETWORK_NAME
+  network_name: PIPELINE_NETWORK_NAME
+  ml_network_name: ML_NETWORK_NAME
   host_project_dir: HOST_PROJECT_DIR
 task_environment:
   - MINIO_ENDPOINT
-  - MINIO_ROOT_USER
-  - MINIO_ROOT_PASSWORD
   - LANDING_BUCKET
   - BRONZE_BUCKET
   - SILVER_BUCKET
@@ -65,11 +64,10 @@ class TestLoadPipelineSettings:
             "IMG_SPARK": "spark:dev",
             "IMG_DELIVERY": "delivery:dev",
             "IMG_ML_MOCK": "ml-mock:dev",
-            "NETWORK_NAME": "platform-net",
+            "PIPELINE_NETWORK_NAME": "clap-pipeline-net",
+            "ML_NETWORK_NAME": "clap-ml-net",
             "HOST_PROJECT_DIR": "/repo",
             "MINIO_ENDPOINT": "http://minio:9000",
-            "MINIO_ROOT_USER": "user",
-            "MINIO_ROOT_PASSWORD": "secret",
             "LANDING_BUCKET": "landing",
             "BRONZE_BUCKET": "bronze",
             "SILVER_BUCKET": "silver",
@@ -84,12 +82,11 @@ class TestLoadPipelineSettings:
         assert settings.img_spark == "spark:dev"
         assert settings.img_delivery == "delivery:dev"
         assert settings.img_ml_mock == "ml-mock:dev"
-        assert settings.network_name == "platform-net"
+        assert settings.network_name == "clap-pipeline-net"
+        assert settings.ml_network_name == "clap-ml-net"
         assert settings.host_project_dir == "/repo"
         assert settings.task_environment == {
             "MINIO_ENDPOINT": "http://minio:9000",
-            "MINIO_ROOT_USER": "user",
-            "MINIO_ROOT_PASSWORD": "secret",
             "LANDING_BUCKET": "landing",
             "BRONZE_BUCKET": "bronze",
             "SILVER_BUCKET": "silver",
@@ -99,13 +96,12 @@ class TestLoadPipelineSettings:
     def test_fails_when_any_env_missing(self, config_path, monkeypatch):
         monkeypatch.setenv("IMG_SIMULATOR", "sim:dev")
         monkeypatch.setenv("IMG_SPARK", "spark:dev")
-        monkeypatch.setenv("NETWORK_NAME", "platform-net")
+        monkeypatch.setenv("PIPELINE_NETWORK_NAME", "clap-pipeline-net")
+        monkeypatch.setenv("ML_NETWORK_NAME", "clap-ml-net")
         monkeypatch.setenv("HOST_PROJECT_DIR", "/repo")
         # Intentionally omit MinIO / bucket vars
         for key in (
             "MINIO_ENDPOINT",
-            "MINIO_ROOT_USER",
-            "MINIO_ROOT_PASSWORD",
             "LANDING_BUCKET",
             "BRONZE_BUCKET",
             "SILVER_BUCKET",
@@ -125,13 +121,13 @@ class TestLoadPipelineSettings:
             "IMG_SPARK",
             "IMG_DELIVERY",
             "IMG_ML_MOCK",
-            "NETWORK_NAME",
+            "PIPELINE_NETWORK_NAME",
+            "ML_NETWORK_NAME",
             "HOST_PROJECT_DIR",
         }
+        # Non-sensitive config only: credentials are mounted secrets, never here.
         assert data["task_environment"] == [
             "MINIO_ENDPOINT",
-            "MINIO_ROOT_USER",
-            "MINIO_ROOT_PASSWORD",
             "LANDING_BUCKET",
             "BRONZE_BUCKET",
             "SILVER_BUCKET",
@@ -141,10 +137,10 @@ class TestLoadPipelineSettings:
             "SCHEMA_VERSION",
             "SPARK_DRIVER_MEMORY",
             "SPARK_SQL_SHUFFLE_PARTITIONS",
-            "DELIVERY_ENCRYPTION_KEY",
             "CATALOG_DB_HOST",
             "CATALOG_DB_PORT",
             "CATALOG_DB_NAME",
             "CATALOG_DB_USER",
-            "CATALOG_DB_PASSWORD",
         ]
+        for secret_key in ("MINIO_ROOT_PASSWORD", "DELIVERY_ENCRYPTION_KEY", "CATALOG_DB_PASSWORD"):
+            assert secret_key not in data["task_environment"]

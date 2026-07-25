@@ -37,9 +37,14 @@ editing an applied migration.
 
 Non-sensitive settings are env vars (see [`.env.example`](../.env.example)):
 `CATALOG_DB_HOST` (default `postgres-catalog`), `CATALOG_DB_PORT` (default
-`5432`), `CATALOG_DB_NAME`, `CATALOG_DB_USER`, `CATALOG_DB_PASSWORD`. The
-password follows the current env-var pattern (like `AIRFLOW_DB_PASSWORD`) — a
-stand-in to be replaced by a Docker secret later.
+`5432`), `CATALOG_DB_NAME`, `CATALOG_DB_USER`. The password is a container secret
+read from `/run/secrets/postgres_catalog_password` (via `read_secret`), with a
+`CATALOG_DB_PASSWORD` env-var fallback for local tooling and tests.
+
+`read_secret(name, *, env=..., default=..., env_mapping=...)` (also in this
+package) is the shared credential loader every service uses: it reads
+`/run/secrets/<name>` and falls back to an env var when no secret file is
+mounted.
 
 ## Idempotency
 

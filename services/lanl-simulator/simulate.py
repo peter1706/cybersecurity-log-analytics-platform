@@ -28,7 +28,7 @@ import sys
 import boto3
 from botocore.client import Config
 
-from catalog import CatalogClient, Checksum, Lineage
+from catalog import CatalogClient, Checksum, Lineage, read_secret
 
 SECONDS_PER_DAY = 86400
 SOURCES = ("auth", "proc", "flows", "dns")
@@ -93,11 +93,15 @@ class LandingSimulator:
 
     @classmethod
     def from_env(cls, subset_dir: str) -> "LandingSimulator":
-        """Build a simulator from the standard MinIO environment variables."""
+        """Build a simulator from the MinIO endpoint/config and MinIO secrets.
+
+        The endpoint, bucket, and schema version are non-sensitive env vars; the
+        MinIO access/secret keys are container secrets (with an env fallback).
+        """
         return cls(
             endpoint=os.environ["MINIO_ENDPOINT"],
-            access_key=os.environ["MINIO_ROOT_USER"],
-            secret_key=os.environ["MINIO_ROOT_PASSWORD"],
+            access_key=read_secret("minio_root_user", env="MINIO_ROOT_USER"),
+            secret_key=read_secret("minio_root_password", env="MINIO_ROOT_PASSWORD"),
             bucket=os.environ.get("LANDING_BUCKET", "landing"),
             subset_dir=subset_dir,
             schema_version=os.environ.get("SCHEMA_VERSION", "v1"),

@@ -6,14 +6,17 @@ docker:
   img_spark: IMG_SPARK
   img_delivery: IMG_DELIVERY
   img_ml_mock: IMG_ML_MOCK
-  network_name: NETWORK_NAME
+  # Data plane network for the producer/Spark/delivery tasks; ml_consume runs on
+  # the isolated consumer network instead.
+  network_name: PIPELINE_NETWORK_NAME
+  ml_network_name: ML_NETWORK_NAME
   host_project_dir: HOST_PROJECT_DIR
 
 # Forwarded into every task container (simulator + spark-processor + delivery + ml-mock).
+# Non-sensitive config only: credentials (MinIO keys, delivery key, catalog
+# password) are delivered as mounted /run/secrets/<name> files, not env vars.
 task_environment:
   - MINIO_ENDPOINT
-  - MINIO_ROOT_USER
-  - MINIO_ROOT_PASSWORD
   - LANDING_BUCKET
   - BRONZE_BUCKET
   - SILVER_BUCKET
@@ -23,9 +26,7 @@ task_environment:
   - SCHEMA_VERSION
   - SPARK_DRIVER_MEMORY
   - SPARK_SQL_SHUFFLE_PARTITIONS
-  - DELIVERY_ENCRYPTION_KEY
   - CATALOG_DB_HOST
   - CATALOG_DB_PORT
   - CATALOG_DB_NAME
   - CATALOG_DB_USER
-  - CATALOG_DB_PASSWORD
