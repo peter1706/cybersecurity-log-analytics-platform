@@ -2,8 +2,8 @@
 
 Source-agnostic: it stitches the per-source ``*_computer_features`` builders into
 one row per computer for one anchor day / window length, matching the data-science
-feature contract (docs/requirements/REQUIREMENTS_DATA_SCIENCE_TEAM.md). Column
-names, order, and null semantics are binding, so they live here as constants.
+feature contract. Column names, order, and null semantics are binding, so they
+live here as constants.
 """
 
 from collections.abc import Mapping
@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
-# Per-source feature columns, in contract order (§4.2-§4.5).
+# Per-source feature columns, in contract order.
 AUTH_FEATURE_COLUMNS = [
     "auth_out_event_count",
     "auth_in_event_count",
@@ -49,8 +49,8 @@ DNS_FEATURE_COLUMNS = [
     "dns_distinct_resolved_hosts",
 ]
 
-# Ratios stay NULL when undefined (ML-NULL-2); every other feature is a
-# counter/sum coalesced to 0 when a computer is absent from that source (ML-NULL-1).
+# Ratios stay NULL when undefined; every other feature is a counter/sum coalesced
+# to 0 when a computer is absent from that source.
 RATE_COLUMNS = ["auth_out_failure_rate", "auth_in_failure_rate"]
 
 ID_WINDOW_COLUMNS = ["computer_id", "anchor_day", "window_days"]
@@ -83,10 +83,10 @@ def assemble_computer_features(
     """Join the four per-source feature frames into the unified per-computer table.
 
     Every computer active in the window in any source (any role) gets exactly one
-    row (ML-ENT-3); computers absent from a source get 0 for that source's
-    counters/sums (ML-NULL-1) while undefined ratios stay NULL (ML-NULL-2). The
-    row is stamped with ``anchor_day`` and ``window_days`` (part of the primary key
-    per ML-ENT-2) and the four ``source_present_*`` availability flags.
+    row; computers absent from a source get 0 for that source's counters/sums while
+    undefined ratios stay NULL. The row is stamped with ``anchor_day`` and
+    ``window_days`` (part of the primary key) and the four ``source_present_*``
+    availability flags.
     """
     joined = (
         auth.join(proc, on="computer_id", how="fullouter")

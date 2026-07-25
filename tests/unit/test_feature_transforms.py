@@ -187,7 +187,7 @@ class TestAssembleComputerFeatures:
         gold = self._assemble(spark, anchor_day=6, window_days=7)
         rows = {r["computer_id"]: r for r in gold.collect()}
 
-        # Every computer active in any source in any role gets a row (ML-ENT-3):
+        # Every computer active in any source in any role gets a row:
         # C1 (auth/proc/flows src), C2 (auth/flows dst), C5 (dns lookup owner).
         assert {"C1", "C2", "C5"}.issubset(set(rows))
         # DNS resolved host is an attribute, not an active computer -> no row.
@@ -196,13 +196,13 @@ class TestAssembleComputerFeatures:
         # C5 only issued a DNS lookup -> auth/proc/flows counters coalesced to 0.
         c5 = rows["C5"]
         assert c5["dns_lookup_count"] == 1
-        assert c5["auth_out_event_count"] == 0  # ML-NULL-1: absent source -> 0
+        assert c5["auth_out_event_count"] == 0  # absent source -> 0
         assert c5["proc_start_count"] == 0
         assert c5["flows_out_count_distinct"] == 0
-        # Undefined ratio stays NULL, not 0.0 (ML-NULL-2).
+        # Undefined ratio stays NULL, not 0.0.
         assert c5["auth_out_failure_rate"] is None
 
-        # Window key columns are stamped on every row (ML-ENT-2).
+        # Window key columns are stamped on every row.
         assert c5["anchor_day"] == 6
         assert c5["window_days"] == 7
 
