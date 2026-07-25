@@ -70,6 +70,7 @@ jobs:
           sed -i "s|^MINIO_ROOT_PASSWORD=.*|MINIO_ROOT_PASSWORD=minioadmin|" .env
           sed -i "s|^AIRFLOW_DB_PASSWORD=.*|AIRFLOW_DB_PASSWORD=airflow|" .env
           sed -i "s|^AIRFLOW_FERNET_KEY=.*|AIRFLOW_FERNET_KEY=${FERNET}|" .env
+          sed -i "s|^DELIVERY_ENCRYPTION_KEY=.*|DELIVERY_ENCRYPTION_KEY=${FERNET}|" .env
           sed -i "s|^AIRFLOW_JWT_SECRET=.*|AIRFLOW_JWT_SECRET=ci-jwt-secret|" .env
           sed -i "s|^AIRFLOW_ADMIN_PASSWORD=.*|AIRFLOW_ADMIN_PASSWORD=admin|" .env
           # Grant the Airflow containers access to the host Docker socket
