@@ -32,11 +32,26 @@ class TestLandingLineage:
         assert record.schema_version == "v1"
 
 
+class TestLandingChecksum:
+    def test_hashes_the_uploaded_bytes(self):
+        import hashlib
+
+        blob = b"some gzip bytes"
+        record = simulate.landing_checksum("auth", 2, blob, 5)
+        assert record.layer == "landing"
+        assert record.source == "auth"
+        assert record.day == 2
+        assert record.record_count == 5
+        assert record.algorithm == "sha256"
+        assert record.checksum == hashlib.sha256(blob).hexdigest()
+
+
 class _FakeCatalog:
-    """Context-manager stand-in for CatalogClient capturing lineage writes."""
+    """Context-manager stand-in for CatalogClient capturing catalog writes."""
 
     def __init__(self):
         self.lineage = []
+        self.checksums = []
 
     def __enter__(self):
         return self
@@ -46,6 +61,9 @@ class _FakeCatalog:
 
     def record_lineage(self, record):
         self.lineage.append(record)
+
+    def record_checksum(self, record):
+        self.checksums.append(record)
 
 
 class _FakeS3:
@@ -106,6 +124,11 @@ class TestRunRecordsLineage:
         assert record.source == "auth"
         assert record.day == 0
         assert record.record_count == 2
+        # A landing checksum is recorded alongside the lineage row.
+        assert len(catalog.checksums) == 1
+        assert catalog.checksums[0].layer == "landing"
+        assert catalog.checksums[0].day == 0
+        assert len(catalog.checksums[0].checksum) == 64  # sha256 hex
 
     def test_multi_day_range_records_one_row_per_uploaded_day(self, tmp_path):
         _write_subset(
