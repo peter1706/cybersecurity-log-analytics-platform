@@ -36,6 +36,9 @@ x-airflow-common: &airflow-common
     DELIVERED_BUCKET: ${DELIVERED_BUCKET}
     ROLLING_WINDOW_DAYS: ${ROLLING_WINDOW_DAYS:-7}
     SCHEMA_VERSION: ${SCHEMA_VERSION:-v1}
+    # Spark tuning, forwarded by the DAG into every spark-processor task.
+    SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-3g}
+    SPARK_SQL_SHUFFLE_PARTITIONS: ${SPARK_SQL_SHUFFLE_PARTITIONS:-8}
     DELIVERY_ENCRYPTION_KEY: ${DELIVERY_ENCRYPTION_KEY}
     # Governance catalog (postgres-catalog) — forwarded to task containers that
     # record lineage/checksums/manifests, and used by Airflow job-run callbacks.
