@@ -48,18 +48,18 @@ for source in "${SOURCES[@]}"; do
   run_sim --source "$source" --day "$START_DAY" --day-end "$END_DAY"
 done
 
-echo "==> Bronze + Silver per source, per day"
-for day in $(seq "$START_DAY" "$END_DAY"); do
-  for source in "${SOURCES[@]}"; do
-    run_spark land_to_bronze --source "$source" --day "$day"
-    run_spark bronze_to_silver --source "$source" --day "$day"
-  done
-done
+echo "==> Bronze then Silver, all sources x days ${START_DAY}..${END_DAY} (one Spark session each)"
+# Batch every (source, day) into a single Spark session per stage so the
+# JVM/Ivy cold start is paid twice, not 2 x sources x days times. land_to_bronze
+# runs fully before bronze_to_silver, so each Silver day reads a Bronze day that
+# already exists.
+run_spark land_to_bronze --all-sources --day "$START_DAY" --day-end "$END_DAY"
+run_spark bronze_to_silver --all-sources --day "$START_DAY" --day-end "$END_DAY"
 
-echo "==> Gold (computer_features) per anchor day -- rolling window = ${ROLLING_WINDOW_DAYS:-7}d"
-for day in $(seq "$START_DAY" "$END_DAY"); do
-  run_spark silver_to_gold --day "$day"
-done
+echo "==> Gold (computer_features) per anchor day ${START_DAY}..${END_DAY} -- rolling window = ${ROLLING_WINDOW_DAYS:-7}d (one Spark session)"
+# One session builds every anchor day; ascending order means each anchor's
+# rolling window sees the Silver days before it.
+run_spark silver_to_gold --day "$START_DAY" --day-end "$END_DAY"
 
 echo "==> Deliver + consume per anchor day"
 for day in $(seq "$START_DAY" "$END_DAY"); do

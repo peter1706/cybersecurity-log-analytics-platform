@@ -17,6 +17,11 @@ def build_spark(app_name: str) -> SparkSession:
     access = os.environ["MINIO_ROOT_USER"]
     secret = os.environ["MINIO_ROOT_PASSWORD"]
 
+    # Single-node dataset: the 200-partition shuffle default just creates tiny
+    # tasks and scheduling overhead. Keep it configurable (SPARK_SQL_SHUFFLE_
+    # PARTITIONS) and only override when set, so tests/other callers keep theirs.
+    shuffle_partitions = os.environ.get("SPARK_SQL_SHUFFLE_PARTITIONS")
+
     builder = (
         SparkSession.builder.appName(app_name)
         .master(os.environ.get("SPARK_MASTER", "local[*]"))
@@ -37,7 +42,21 @@ def build_spark(app_name: str) -> SparkSession:
             "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
         )
     )
-    spark = configure_spark_with_delta_pip(builder, extra_packages=[HADOOP_AWS]).getOrCreate()
+    if shuffle_partitions:
+        builder = builder.config("spark.sql.shuffle.partitions", shuffle_partitions)
+
+    builder = configure_spark_with_delta_pip(builder, extra_packages=[HADOOP_AWS])
+    # In local mode the driver JVM heap is fixed at launch, so spark.driver.memory
+    # set on the builder is ignored -- it must be a launcher arg. Inject it into
+    # PYSPARK_SUBMIT_ARGS (which getOrCreate reads to start the gateway JVM),
+    # preserving whatever configure_spark_with_delta_pip already put there.
+    driver_memory = os.environ.get("SPARK_DRIVER_MEMORY")
+    if driver_memory:
+        submit_args = os.environ.get("PYSPARK_SUBMIT_ARGS", "pyspark-shell")
+        if "--driver-memory" not in submit_args:
+            os.environ["PYSPARK_SUBMIT_ARGS"] = f"--driver-memory {driver_memory} {submit_args}"
+
+    spark = builder.getOrCreate()
     spark.sparkContext.setLogLevel(os.environ.get("SPARK_LOG_LEVEL", "WARN"))
     return spark
 
