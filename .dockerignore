@@ -1,0 +1,44 @@
+# Repo-root build context is used by the service/airflow images so they can layer
+# in the shared `catalog/` package. Keep the context small: only source needed by
+# the Dockerfiles should be sent to the daemon.
+
+.git
+.github
+.venv
+venv
+env
+.idea
+.vscode
+
+# Python caches / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Tests and local-only docs (never needed at image build time)
+tests/
+docs/
+*.md
+
+# Data: the raw dataset and generated lake layers. The simulator's subset is
+# bind-mounted at runtime, not baked into the image.
+lanl_dataset/
+data/
+
+# Spark / Delta / Airflow local state
+spark-warehouse/
+metastore_db/
+derby.log
+airflow/logs/
+
+# Secrets / local env
+.env
+.env.*
+secrets/
+*.pem
+*.key

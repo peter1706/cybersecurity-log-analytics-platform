@@ -1,3 +1,5 @@
+# Built from the repo root (see docker-compose build.context) so the shared
+# `catalog/` governance client can be layered into the image.
 FROM python:3.11-slim
 
 # Java runtime for Spark.
@@ -8,11 +10,14 @@ RUN apt-get update \
 ENV JAVA_HOME=/usr/lib/jvm/default-java
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY services/spark-processor/requirements.txt .
+COPY catalog/requirements.txt catalog-requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -r catalog-requirements.txt
 
-COPY jobs ./jobs
-COPY run_job.py .
+COPY services/spark-processor/jobs ./jobs
+COPY services/spark-processor/run_job.py .
+# Shared governance-catalog client (lineage / schema-registry writes).
+COPY catalog ./catalog
 
 # Pre-download the Delta + hadoop-aws jars into the Ivy cache so runtime starts
 # offline. build_spark() reads the MinIO creds up front, so dummy values are

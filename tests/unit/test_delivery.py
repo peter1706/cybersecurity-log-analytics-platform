@@ -88,6 +88,30 @@ class TestManifest:
         assert json.loads(bundle.manifest_bytes(manifest)) == manifest
 
 
+class TestManifestRecord:
+    def test_maps_manifest_to_governance_record(self):
+        key = Fernet.generate_key()
+        manifest = bundle.build_manifest(
+            schema_version="v1",
+            window_days=7,
+            anchor_day=6,
+            record_count=42,
+            plaintext=b"rows",
+            key=key,
+        )
+        record = bundle.manifest_record(manifest)
+        assert record.dataset == "computer_features"
+        assert record.dataset_version == manifest["dataset_version"]
+        assert record.schema_version == "v1"
+        assert record.window_days == 7
+        assert record.anchor_day == 6
+        assert record.record_count == 42
+        assert record.checksum_sha256 == bundle.sha256_hex(b"rows")
+        assert record.encryption_scheme == "fernet"
+        assert record.encryption_key_id == bundle.key_id(key)
+        assert record.data_object == bundle.data_key(6, 7)
+
+
 def test_delivered_columns_match_producer_contract():
     """Delivery's schema must equal the producer's binding Gold schema."""
     features = pytest.importorskip("jobs.transforms.features")

@@ -11,7 +11,9 @@ from abc import ABC, abstractmethod
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from .common import landing_prefix, rolling_window_days, table_path
+from catalog import CatalogClient, Lineage, SchemaRegistration
+
+from .common import landing_prefix, rolling_window_days, schema_version, table_path
 from .sources import SourceSpec
 from .transforms import (
     assemble_computer_features,
@@ -26,11 +28,35 @@ class MedallionJob(ABC):
     """Template for a single Medallion transition for one source and day."""
 
     name: str = "medallion_job"
+    # Layer boundary this job crosses, stamped on the lineage record.
+    from_layer: str = ""
+    to_layer: str = ""
 
     def __init__(self, spark: SparkSession, source: SourceSpec, day: int):
         self.spark = spark
         self.source = source
         self.day = day
+
+    def governance_records(
+        self, count: int, columns: list[str]
+    ) -> tuple[Lineage, SchemaRegistration]:
+        """Build the lineage + schema-registry records for this write (pure)."""
+        version = schema_version()
+        lineage = Lineage(
+            source=self.source.name,
+            day=self.day,
+            from_layer=self.from_layer,
+            to_layer=self.to_layer,
+            record_count=count,
+            schema_version=version,
+        )
+        schema = SchemaRegistration(
+            source=self.source.name,
+            layer=self.to_layer,
+            schema_version=version,
+            columns=list(columns),
+        )
+        return lineage, schema
 
     @abstractmethod
     def read(self) -> DataFrame:
@@ -64,6 +90,12 @@ class MedallionJob(ABC):
         if count == 0:
             raise ValueError(f"{self.name}: 0 rows for {self.source.name} day={self.day}")
         self.write(result)
+        # Record lineage + schema as part of the same task, after a successful
+        # write. A catalog failure here fails the task (governance is not optional).
+        lineage, schema = self.governance_records(count, result.columns)
+        with CatalogClient.connect() as catalog:
+            catalog.record_lineage(lineage)
+            catalog.register_schema(schema)
         print(
             f"{self.name}: wrote {count:,} rows -> {self.target_path()} "
             f"(source={self.source.name}, day={self.day})",
@@ -76,6 +108,8 @@ class LandToBronzeJob(MedallionJob):
     """Job (a): landing -> Bronze."""
 
     name = "land_to_bronze"
+    from_layer = "landing"
+    to_layer = "bronze"
 
     def read(self) -> DataFrame:
         src = landing_prefix(self.source.name, self.day)
@@ -96,6 +130,8 @@ class BronzeToSilverJob(MedallionJob):
     """Job (b): Bronze -> Silver."""
 
     name = "bronze_to_silver"
+    from_layer = "bronze"
+    to_layer = "silver"
 
     def read(self) -> DataFrame:
         path = table_path("bronze", self.source.name)
@@ -144,6 +180,28 @@ class ComputerFeaturesJob:
     def __init__(self, spark: SparkSession, day: int):
         self.spark = spark
         self.day = day
+
+    def governance_records(
+        self, count: int, columns: list[str], window: int
+    ) -> tuple[Lineage, SchemaRegistration]:
+        """Build the Silver -> Gold lineage + schema-registry records (pure)."""
+        version = schema_version()
+        lineage = Lineage(
+            source=None,
+            day=self.day,
+            from_layer="silver",
+            to_layer="gold",
+            record_count=count,
+            schema_version=version,
+            window_days=window,
+        )
+        schema = SchemaRegistration(
+            source=self.gold_table,
+            layer="gold",
+            schema_version=version,
+            columns=list(columns),
+        )
+        return lineage, schema
 
     def _windowed_silver(self, source: str, start_day: int) -> DataFrame:
         """Read one source's Silver rows for the window [start_day, anchor day]."""
@@ -203,6 +261,10 @@ class ComputerFeaturesJob:
             .partitionBy("window_days", "anchor_day")
             .save(target)
         )
+        lineage, schema = self.governance_records(count, features.columns, window)
+        with CatalogClient.connect() as catalog:
+            catalog.record_lineage(lineage)
+            catalog.register_schema(schema)
         print(
             f"{self.name}: wrote {count:,} rows -> {target} "
             f"(anchor_day={self.day}, window={window}d, present={source_present})",
