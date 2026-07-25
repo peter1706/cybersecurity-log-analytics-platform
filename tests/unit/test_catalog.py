@@ -69,9 +69,7 @@ class TestCatalogConfig:
             CatalogConfig.from_env(env)
 
     def test_dsn_contains_all_connection_fields(self):
-        cfg = CatalogConfig(
-            host="db", port=5432, dbname="catalog", user="cat", password="secret"
-        )
+        cfg = CatalogConfig(host="db", port=5432, dbname="catalog", user="cat", password="secret")
         dsn = cfg.dsn()
         for token in ("host=db", "port=5432", "dbname=catalog", "user=cat", "password=secret"):
             assert token in dsn

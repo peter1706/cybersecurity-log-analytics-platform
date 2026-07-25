@@ -7,7 +7,10 @@ import pytest
 pytest.importorskip("airflow")
 pytest.importorskip("airflow.providers.docker")
 
-from pipeline_dag import build_daily_pipeline  # noqa: E402
+import datetime as dt  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+from pipeline_dag import build_daily_pipeline, build_job_run  # noqa: E402
 from pipeline_settings import PipelineSettings  # noqa: E402
 
 
@@ -76,9 +79,7 @@ def test_daily_pipeline_task_order_and_deps(settings):
     # Every source's Silver feeds the single cross-source computer_features Gold job,
     # which then flows Gold -> deliver -> ml_consume.
     for source in ("auth", "proc", "flows", "dns"):
-        assert dag.task_dict[f"{source}.bronze_to_silver"].downstream_task_ids == {
-            "silver_to_gold"
-        }
+        assert dag.task_dict[f"{source}.bronze_to_silver"].downstream_task_ids == {"silver_to_gold"}
     assert dag.task_dict["silver_to_gold"].downstream_task_ids == {"deliver"}
     assert dag.task_dict["deliver"].downstream_task_ids == {"ml_consume"}
     assert dag.task_dict["ml_consume"].downstream_task_ids == set()
@@ -131,3 +132,52 @@ def test_daily_pipeline_operator_wiring(settings):
     assert ml_consume.image == "clap-ml-mock:test"
     assert ml_consume.command == ["--day", "{{ params.day }}"]
     assert ml_consume.environment == settings.task_environment
+
+
+def _callback_context(**overrides) -> dict:
+    """A minimal Airflow-callback context for build_job_run."""
+    ti = SimpleNamespace(
+        dag_id="daily_pipeline",
+        task_id="auth.land_to_bronze",
+        run_id="manual__2026-01-01",
+        try_number=2,
+        start_date=dt.datetime(2026, 1, 1, 0, 0, 0, tzinfo=dt.UTC),
+        end_date=dt.datetime(2026, 1, 1, 0, 0, 5, tzinfo=dt.UTC),
+        duration=5.0,
+    )
+    context = {
+        "task_instance": ti,
+        "dag_run": SimpleNamespace(run_id="manual__2026-01-01"),
+        "params": {"day": 6},
+        "exception": None,
+    }
+    context.update(overrides)
+    return context
+
+
+class TestBuildJobRun:
+    def test_success_splits_source_and_job_and_carries_timing(self):
+        record = build_job_run(_callback_context(), "success")
+        assert record.dag_id == "daily_pipeline"
+        assert record.task_id == "auth.land_to_bronze"
+        assert record.source == "auth"
+        assert record.job == "land_to_bronze"
+        assert record.status == "success"
+        assert record.day == 6
+        assert record.try_number == 2
+        assert record.duration_ms == 5000
+        assert record.error is None
+        assert record.started_at is not None
+        assert record.finished_at is not None
+
+    def test_ungrouped_task_has_no_source(self):
+        context = _callback_context()
+        context["task_instance"].task_id = "silver_to_gold"
+        record = build_job_run(context, "success")
+        assert record.source is None
+        assert record.job == "silver_to_gold"
+
+    def test_failure_captures_exception_text(self):
+        record = build_job_run(_callback_context(exception=RuntimeError("boom")), "failed")
+        assert record.status == "failed"
+        assert record.error is not None and "boom" in record.error

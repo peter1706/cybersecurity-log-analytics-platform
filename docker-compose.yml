@@ -1,7 +1,9 @@
 # First thin vertical slice: MinIO + Airflow 3.3 (LocalExecutor) + Spark/Delta.
 
 x-airflow-common: &airflow-common
-  build: ./airflow
+  build:
+    context: .
+    dockerfile: airflow/Dockerfile
   image: clap-airflow:dev
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -42,6 +44,9 @@ x-airflow-common: &airflow-common
     CATALOG_DB_NAME: ${CATALOG_DB_NAME}
     CATALOG_DB_USER: ${CATALOG_DB_USER}
     CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD}
+    # Make the image-baked `catalog/` governance client importable by the DAG's
+    # job-run callbacks (it lives outside the bind-mounted dags/ dir).
+    PYTHONPATH: /opt/airflow/governance
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - airflow-logs:/opt/airflow/logs
@@ -198,18 +203,25 @@ services:
     restart: unless-stopped
 
   # --- Task images (built, not run as services). Launched by the DAG. ---
+  # Built from the repo root so each image can COPY the shared catalog/ client.
   lanl-simulator:
-    build: ./services/lanl-simulator
+    build:
+      context: .
+      dockerfile: services/lanl-simulator/Dockerfile
     image: ${IMG_SIMULATOR}
     profiles: ["build"]
 
   spark-processor:
-    build: ./services/spark-processor
+    build:
+      context: .
+      dockerfile: services/spark-processor/Dockerfile
     image: ${IMG_SPARK}
     profiles: ["build"]
 
   delivery:
-    build: ./services/delivery
+    build:
+      context: .
+      dockerfile: services/delivery/Dockerfile
     image: ${IMG_DELIVERY}
     profiles: ["build"]
 

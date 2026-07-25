@@ -27,6 +27,8 @@ import pyarrow.parquet as pq
 from botocore.client import Config
 from deltalake import DeltaTable
 
+from catalog import CatalogClient
+
 
 def _storage_options() -> dict[str, str]:
     """delta-rs (object_store) S3 options pointing at MinIO."""
@@ -113,6 +115,10 @@ def deliver(anchor_day: int, window_days: int) -> dict:
         Key=bundle.manifest_key(anchor_day, window_days),
         Body=bundle.manifest_bytes(manifest),
     )
+    # Persist the manifest to the governance catalog as part of the same task
+    # (in addition to the manifest.json shipped in the delivered bucket).
+    with CatalogClient.connect() as catalog:
+        catalog.record_delivery_manifest(bundle.manifest_record(manifest))
     print(
         f"delivery: anchor_day={anchor_day} window_days={window_days} "
         f"-> s3://{delivered_bucket}/{bundle.data_key(anchor_day, window_days)} "
