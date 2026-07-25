@@ -17,6 +17,10 @@ END_DAY="${2:-6}"
 # host path is required. Override whatever is in .env for this run.
 export HOST_PROJECT_DIR="$(pwd)"
 
+echo "==> Initializing container secrets (./secrets)"
+# Compose + backfill mount every credential from ./secrets/<name>.
+bash scripts/init_secrets.sh
+
 echo "==> Building images (airflow, simulator, spark-processor, delivery, ml-mock)"
 docker compose --profile build build
 

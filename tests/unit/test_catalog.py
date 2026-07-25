@@ -19,6 +19,7 @@ from catalog import (
     JobRun,
     Lineage,
     SchemaRegistration,
+    read_secret,
 )
 from catalog import client as client_module
 
@@ -73,6 +74,63 @@ class TestCatalogConfig:
         dsn = cfg.dsn()
         for token in ("host=db", "port=5432", "dbname=catalog", "user=cat", "password=secret"):
             assert token in dsn
+
+    def test_from_env_reads_password_from_secret_file(self, tmp_path, monkeypatch):
+        (tmp_path / "postgres_catalog_password").write_text("file-secret\n")
+        monkeypatch.setenv("SECRETS_DIR", str(tmp_path))
+        # The env fallback is present but the mounted file must win.
+        cfg = CatalogConfig.from_env(
+            {
+                "CATALOG_DB_NAME": "catalog",
+                "CATALOG_DB_USER": "cat",
+                "CATALOG_DB_PASSWORD": "env-secret",
+                "SECRETS_DIR": str(tmp_path),
+            }
+        )
+        assert cfg.password == "file-secret"
+
+
+# --- Secrets ----------------------------------------------------------------
+
+
+class TestReadSecret:
+    def test_file_wins_over_env(self, tmp_path, monkeypatch):
+        (tmp_path / "minio_root_password").write_text("from-file\n")
+        monkeypatch.setenv("SECRETS_DIR", str(tmp_path))
+        monkeypatch.setenv("MINIO_ROOT_PASSWORD", "from-env")
+        assert read_secret("minio_root_password") == "from-file"
+
+    def test_env_fallback_when_no_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SECRETS_DIR", str(tmp_path))
+        monkeypatch.setenv("MINIO_ROOT_PASSWORD", "from-env")
+        assert read_secret("minio_root_password") == "from-env"
+
+    def test_explicit_env_name(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SECRETS_DIR", str(tmp_path))
+        monkeypatch.setenv("CATALOG_DB_PASSWORD", "pw")
+        assert read_secret("postgres_catalog_password", env="CATALOG_DB_PASSWORD") == "pw"
+
+    def test_blank_file_falls_back_to_env(self, tmp_path, monkeypatch):
+        (tmp_path / "minio_root_password").write_text("   \n")
+        monkeypatch.setenv("SECRETS_DIR", str(tmp_path))
+        monkeypatch.setenv("MINIO_ROOT_PASSWORD", "from-env")
+        assert read_secret("minio_root_password") == "from-env"
+
+    def test_default_used_when_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SECRETS_DIR", str(tmp_path))
+        monkeypatch.delenv("SOME_TOKEN", raising=False)
+        assert read_secret("some_token", default="fallback") == "fallback"
+
+    def test_missing_raises_keyerror(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SECRETS_DIR", str(tmp_path))
+        monkeypatch.delenv("MISSING_SECRET", raising=False)
+        with pytest.raises(KeyError):
+            read_secret("missing_secret")
+
+    def test_env_mapping_overrides_source(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SECRETS_DIR", str(tmp_path))
+        monkeypatch.delenv("MINIO_ROOT_PASSWORD", raising=False)
+        assert read_secret("minio_root_password", env_mapping={"MINIO_ROOT_PASSWORD": "m"}) == "m"
 
 
 # --- SQL builders -----------------------------------------------------------

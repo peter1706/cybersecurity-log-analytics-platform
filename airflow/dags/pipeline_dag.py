@@ -17,6 +17,35 @@ from catalog import CatalogClient, JobRun
 SOURCES = ("auth", "proc", "flows", "dns")
 DAY_TEMPLATE = "{{ params.day }}"
 
+# Credentials the ML consumer is allowed to hold. It runs on the isolated
+# consumer network with a `delivered`-scoped MinIO service account, so only these
+# secret files are mounted -- never the MinIO root keys or the catalog password.
+ML_CONSUMER_SECRETS = (
+    "minio_ml_consumer_key",
+    "minio_ml_consumer_secret",
+    "delivery_encryption_key",
+)
+
+
+def _secret_mount(host_project_dir: str, name: str) -> Mount:
+    """Read-only bind of one host secret file into ``/run/secrets/<name>``."""
+    return Mount(
+        source=f"{host_project_dir}/secrets/{name}",
+        target=f"/run/secrets/{name}",
+        type="bind",
+        read_only=True,
+    )
+
+
+def _all_secrets_mount(host_project_dir: str) -> Mount:
+    """Read-only bind of the whole host secrets dir into ``/run/secrets``."""
+    return Mount(
+        source=f"{host_project_dir}/secrets",
+        target="/run/secrets",
+        type="bind",
+        read_only=True,
+    )
+
 
 def _iso(value) -> str | None:
     """Return an ISO-8601 string for a datetime, or ``None``."""
@@ -89,9 +118,25 @@ DEFAULT_ARGS = {
 
 
 class _PlatformDockerOperator(DockerOperator):
-    """DockerOperator preloaded with the platform's shared Docker settings."""
+    """DockerOperator preloaded with the platform's shared Docker settings.
 
-    def __init__(self, *, settings: PipelineSettings, **kwargs):
+    Credentials are delivered as read-only ``/run/secrets`` bind mounts (never
+    env vars). By default every task gets the whole host ``secrets/`` dir; pass
+    ``secret_mounts`` to restrict a task (the ML consumer only mounts its scoped
+    subset). Any task-specific ``mounts`` (e.g. the simulator's data subset) are
+    appended to the secret mounts rather than replacing them.
+    """
+
+    def __init__(
+        self,
+        *,
+        settings: PipelineSettings,
+        secret_mounts: list[Mount] | None = None,
+        **kwargs,
+    ):
+        if secret_mounts is None:
+            secret_mounts = [_all_secrets_mount(settings.host_project_dir)]
+        extra_mounts = kwargs.pop("mounts", [])
         defaults = {
             "docker_url": "unix:///var/run/docker.sock",
             "network_mode": settings.network_name,
@@ -99,6 +144,7 @@ class _PlatformDockerOperator(DockerOperator):
             "mount_tmp_dir": False,
             "tty": False,
             "environment": settings.task_environment,
+            "mounts": [*secret_mounts, *extra_mounts],
         }
         super().__init__(**{**defaults, **kwargs})
 
@@ -183,14 +229,22 @@ class DeliveryOperator(_PlatformDockerOperator):
 
 
 class MlConsumeOperator(_PlatformDockerOperator):
-    """Runs the ml-mock consumer to verify the delivered partition and mock-retrain."""
+    """Runs the ml-mock consumer to verify the delivered partition and mock-retrain.
+
+    Isolated to the consumer network and given only the `delivered`-scoped MinIO
+    service account + the decryption key -- never the MinIO root keys or the
+    catalog password (defense in depth alongside the network boundary).
+    """
 
     def __init__(self, *, settings: PipelineSettings, day: str = DAY_TEMPLATE, **kwargs):
+        scoped = [_secret_mount(settings.host_project_dir, name) for name in ML_CONSUMER_SECRETS]
         super().__init__(
             settings=settings,
             task_id="ml_consume",
             image=settings.img_ml_mock,
             command=["--day", day],
+            network_mode=settings.ml_network_name,
+            secret_mounts=scoped,
             **kwargs,
         )
 

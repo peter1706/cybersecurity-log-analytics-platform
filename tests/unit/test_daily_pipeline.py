@@ -22,19 +22,18 @@ def settings() -> PipelineSettings:
         img_spark="clap-spark-processor:test",
         img_delivery="clap-delivery:test",
         img_ml_mock="clap-ml-mock:test",
-        network_name="platform-net",
+        network_name="clap-pipeline-net",
+        ml_network_name="clap-ml-net",
         host_project_dir="/repo",
+        # Non-sensitive config only; credentials arrive as mounted /run/secrets.
         task_environment={
             "MINIO_ENDPOINT": "http://minio:9000",
-            "MINIO_ROOT_USER": "user",
-            "MINIO_ROOT_PASSWORD": "secret",
             "LANDING_BUCKET": "landing",
             "BRONZE_BUCKET": "bronze",
             "SILVER_BUCKET": "silver",
             "GOLD_BUCKET": "gold",
             "DELIVERED_BUCKET": "delivered",
             "SCHEMA_VERSION": "v1",
-            "DELIVERY_ENCRYPTION_KEY": "test-key",
         },
     )
 
@@ -98,10 +97,15 @@ def test_daily_pipeline_operator_wiring(settings):
     simulate = dag.task_dict["auth.simulate"]
     assert simulate.image == "clap-lanl-simulator:test"
     assert simulate.command == ["--source", "auth", "--day", "{{ params.day }}"]
-    assert simulate.network_mode == "platform-net"
+    assert simulate.network_mode == "clap-pipeline-net"
     assert simulate.environment["MINIO_ENDPOINT"] == "http://minio:9000"
-    assert simulate.mounts[0]["Source"] == "/repo/data/subset"
-    assert simulate.mounts[0]["Target"] == "/data/subset"
+    # No credentials leak into the environment; they arrive as mounted secrets.
+    assert "MINIO_ROOT_PASSWORD" not in simulate.environment
+    # Mounts: the whole secrets dir (read-only) plus the data/subset bind.
+    mount_sources = {m["Source"]: m for m in simulate.mounts}
+    assert mount_sources["/repo/secrets"]["Target"] == "/run/secrets"
+    assert mount_sources["/repo/secrets"]["ReadOnly"] is True
+    assert mount_sources["/repo/data/subset"]["Target"] == "/data/subset"
 
     spark = dag.task_dict["auth.land_to_bronze"]
     assert spark.image == "clap-spark-processor:test"
@@ -132,6 +136,17 @@ def test_daily_pipeline_operator_wiring(settings):
     assert ml_consume.image == "clap-ml-mock:test"
     assert ml_consume.command == ["--day", "{{ params.day }}"]
     assert ml_consume.environment == settings.task_environment
+    # The consumer is isolated to the ML network and only ever mounts its scoped
+    # secrets -- never the whole secrets dir (which would expose the root keys).
+    assert ml_consume.network_mode == "clap-ml-net"
+    ml_targets = {m["Target"] for m in ml_consume.mounts}
+    assert ml_targets == {
+        "/run/secrets/minio_ml_consumer_key",
+        "/run/secrets/minio_ml_consumer_secret",
+        "/run/secrets/delivery_encryption_key",
+    }
+    assert "/run/secrets" not in ml_targets
+    assert all(m["ReadOnly"] for m in ml_consume.mounts)
 
 
 def _callback_context(**overrides) -> dict:
