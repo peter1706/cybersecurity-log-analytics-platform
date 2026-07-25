@@ -4,6 +4,8 @@ import os
 
 from pyspark.sql import SparkSession
 
+from catalog import read_secret
+
 HADOOP_AWS = "org.apache.hadoop:hadoop-aws:3.3.4"
 
 
@@ -14,8 +16,9 @@ def build_spark(app_name: str) -> SparkSession:
     from delta import configure_spark_with_delta_pip
 
     endpoint = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
-    access = os.environ["MINIO_ROOT_USER"]
-    secret = os.environ["MINIO_ROOT_PASSWORD"]
+    # MinIO keys are container secrets (env fallback for local tooling/tests).
+    access = read_secret("minio_root_user", env="MINIO_ROOT_USER")
+    secret = read_secret("minio_root_password", env="MINIO_ROOT_PASSWORD")
 
     # Single-node dataset: the 200-partition shuffle default just creates tiny
     # tasks and scheduling overhead. Keep it configurable (SPARK_SQL_SHUFFLE_

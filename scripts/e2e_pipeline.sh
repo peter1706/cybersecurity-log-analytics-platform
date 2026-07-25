@@ -13,6 +13,10 @@ LOGICAL_DATE="2026-01-01"
 # host path. Override whatever is in .env for this run.
 export HOST_PROJECT_DIR="$(pwd)"
 
+echo "==> Initializing container secrets (./secrets)"
+# Compose mounts every credential from ./secrets/<name>; create any missing ones.
+bash scripts/init_secrets.sh
+
 echo "==> Building images (airflow, simulator, spark-processor, delivery, ml-mock)"
 docker compose --profile build build
 

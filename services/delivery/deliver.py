@@ -27,26 +27,36 @@ import pyarrow.parquet as pq
 from botocore.client import Config
 from deltalake import DeltaTable
 
-from catalog import CatalogClient
+from catalog import CatalogClient, read_secret
+
+
+def _minio_credentials() -> tuple[str, str]:
+    """Return the MinIO (access_key, secret_key) from container secrets."""
+    return (
+        read_secret("minio_root_user", env="MINIO_ROOT_USER"),
+        read_secret("minio_root_password", env="MINIO_ROOT_PASSWORD"),
+    )
 
 
 def _storage_options() -> dict[str, str]:
     """delta-rs (object_store) S3 options pointing at MinIO."""
+    access, secret = _minio_credentials()
     return {
         "AWS_ENDPOINT_URL": os.environ["MINIO_ENDPOINT"],
-        "AWS_ACCESS_KEY_ID": os.environ["MINIO_ROOT_USER"],
-        "AWS_SECRET_ACCESS_KEY": os.environ["MINIO_ROOT_PASSWORD"],
+        "AWS_ACCESS_KEY_ID": access,
+        "AWS_SECRET_ACCESS_KEY": secret,
         "AWS_REGION": os.environ.get("AWS_REGION", "us-east-1"),
         "AWS_ALLOW_HTTP": "true",
     }
 
 
 def _s3_client():
+    access, secret = _minio_credentials()
     return boto3.client(
         "s3",
         endpoint_url=os.environ["MINIO_ENDPOINT"],
-        aws_access_key_id=os.environ["MINIO_ROOT_USER"],
-        aws_secret_access_key=os.environ["MINIO_ROOT_PASSWORD"],
+        aws_access_key_id=access,
+        aws_secret_access_key=secret,
         config=Config(signature_version="s3v4"),
         region_name=os.environ.get("AWS_REGION", "us-east-1"),
     )
@@ -77,7 +87,7 @@ def _ensure_bucket(client, bucket: str) -> None:
 def deliver(anchor_day: int, window_days: int) -> dict:
     """Read, encrypt, and upload one partition + manifest; return the manifest."""
     schema_version = os.environ.get("SCHEMA_VERSION", "v1")
-    key = os.environ["DELIVERY_ENCRYPTION_KEY"]
+    key = read_secret("delivery_encryption_key", env="DELIVERY_ENCRYPTION_KEY")
     delivered_bucket = os.environ.get("DELIVERED_BUCKET", "delivered")
 
     table = read_gold_partition(anchor_day, window_days)
