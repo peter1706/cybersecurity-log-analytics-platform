@@ -16,6 +16,7 @@ from .client import (
     SchemaRegistration,
 )
 from .config import CatalogConfig
+from .secrets import read_secret
 
 __all__ = [
     "CatalogClient",
@@ -25,4 +26,5 @@ __all__ = [
     "JobRun",
     "Lineage",
     "SchemaRegistration",
+    "read_secret",
 ]

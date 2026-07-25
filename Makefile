@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt test test-unit test-e2e build up down pipeline backfill e2e e2e-full clean
+.PHONY: help install lint fmt test test-unit test-e2e build secrets up down pipeline backfill e2e e2e-full clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -26,7 +26,10 @@ test-e2e: ## Verify Gold output in MinIO (run `make pipeline` first)
 build: ## Build all images (airflow, simulator, spark-processor, delivery, ml-mock)
 	docker compose --profile build build
 
-up: ## Start the core platform services
+secrets: ## Create any missing container secrets in ./secrets (idempotent)
+	bash scripts/init_secrets.sh
+
+up: secrets ## Start the core platform services
 	HOST_PROJECT_DIR=$$(pwd) docker compose up -d
 
 down: ## Stop the platform (keeps volumes)

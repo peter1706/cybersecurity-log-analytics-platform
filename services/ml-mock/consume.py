@@ -31,17 +31,21 @@ import pyarrow.parquet as pq
 from botocore.client import Config
 from cryptography.fernet import Fernet
 
+from catalog import read_secret
+
 DATASET = "computer_features"
 
 
 def _s3_client():
-    # Uses the shared root credential; a MinIO service account scoped to the
-    # `delivered` bucket only would tighten this to least privilege.
+    # Least privilege: a MinIO service account scoped to the `delivered` bucket
+    # only (never the layer buckets), read from container secrets.
     return boto3.client(
         "s3",
         endpoint_url=os.environ["MINIO_ENDPOINT"],
-        aws_access_key_id=os.environ["MINIO_ROOT_USER"],
-        aws_secret_access_key=os.environ["MINIO_ROOT_PASSWORD"],
+        aws_access_key_id=read_secret("minio_ml_consumer_key", env="MINIO_ML_CONSUMER_KEY"),
+        aws_secret_access_key=read_secret(
+            "minio_ml_consumer_secret", env="MINIO_ML_CONSUMER_SECRET"
+        ),
         config=Config(signature_version="s3v4"),
         region_name=os.environ.get("AWS_REGION", "us-east-1"),
     )
@@ -54,7 +58,7 @@ def _prefix(anchor_day: int, window_days: int) -> str:
 def consume(anchor_day: int, window_days: int) -> dict:
     """Verify a delivered partition end-to-end; return a small summary dict."""
     bucket = os.environ.get("DELIVERED_BUCKET", "delivered")
-    key = os.environ["DELIVERY_ENCRYPTION_KEY"]
+    key = read_secret("delivery_encryption_key", env="DELIVERY_ENCRYPTION_KEY")
     prefix = _prefix(anchor_day, window_days)
 
     client = _s3_client()

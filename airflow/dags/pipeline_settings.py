@@ -20,6 +20,7 @@ class PipelineSettings:
     img_delivery: str
     img_ml_mock: str
     network_name: str
+    ml_network_name: str
     host_project_dir: str
     task_environment: dict[str, str]
 
@@ -64,6 +65,7 @@ def load_pipeline_settings(config_path: Path | str | None = None) -> PipelineSet
         img_delivery=require_env(docker["img_delivery"]),
         img_ml_mock=require_env(docker["img_ml_mock"]),
         network_name=require_env(docker["network_name"]),
+        ml_network_name=require_env(docker["ml_network_name"]),
         host_project_dir=require_env(docker["host_project_dir"]),
         task_environment={key: require_env(key) for key in task_keys},
     )

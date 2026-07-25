@@ -17,15 +17,23 @@ Mock consumer of the `delivered` store, with two run modes from one image:
 
 ## Notes
 
-- Uses the shared root MinIO credential and reads only the `delivered` bucket.
+- Least privilege: runs on the isolated consumer network with a MinIO service
+  account scoped to the `delivered` bucket only (never the layer buckets). Its
+  credentials come from mounted secrets, and it never talks to the governance
+  catalog DB.
 - Reads the manifest from the `delivered` bucket alongside the encrypted data.
 
-## Configuration (env)
+## Configuration
 
-| Var | Purpose |
-|-----|---------|
-| `MINIO_ENDPOINT`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | MinIO access |
-| `DELIVERED_BUCKET` | delivered bucket (default `delivered`) |
-| `DELIVERY_ENCRYPTION_KEY` | Fernet key |
-| `ROLLING_WINDOW_DAYS` | default `--window-days` |
-| `ML_DASHBOARD_PORT` | host port for the dashboard (default `8501`) |
+Non-sensitive config is env vars; credentials are container secrets mounted at
+`/run/secrets/<name>` (loaded via `read_secret`, with an env-var fallback for
+local runs).
+
+| Var / secret | Kind | Purpose |
+|-----|-----|---------|
+| `MINIO_ENDPOINT` | env | MinIO endpoint URL |
+| `minio_ml_consumer_key`, `minio_ml_consumer_secret` | secret | `delivered`-scoped MinIO service account |
+| `delivery_encryption_key` | secret | Fernet key for decrypting delivered Parquet |
+| `DELIVERED_BUCKET` | env | delivered bucket (default `delivered`) |
+| `ROLLING_WINDOW_DAYS` | env | default `--window-days` |
+| `ML_DASHBOARD_PORT` | env | host port for the dashboard (default `8501`) |
