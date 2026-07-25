@@ -15,7 +15,14 @@ select = ["E", "W", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 # Make repo modules importable in tests without installing a package.
-pythonpath = [".", "scripts", "services/spark-processor", "airflow/dags"]
+pythonpath = [
+    ".",
+    "scripts",
+    "services/spark-processor",
+    "services/delivery",
+    "services/ml-mock",
+    "airflow/dags",
+]
 testpaths = ["tests"]
 markers = [
     "e2e: end-to-end tests that require docker compose (deselect with '-m \"not e2e\"')",

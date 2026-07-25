@@ -12,6 +12,8 @@ FIXTURE_YAML = """\
 docker:
   img_simulator: IMG_SIMULATOR
   img_spark: IMG_SPARK
+  img_delivery: IMG_DELIVERY
+  img_ml_mock: IMG_ML_MOCK
   network_name: NETWORK_NAME
   host_project_dir: HOST_PROJECT_DIR
 task_environment:
@@ -61,6 +63,8 @@ class TestLoadPipelineSettings:
         env = {
             "IMG_SIMULATOR": "sim:dev",
             "IMG_SPARK": "spark:dev",
+            "IMG_DELIVERY": "delivery:dev",
+            "IMG_ML_MOCK": "ml-mock:dev",
             "NETWORK_NAME": "platform-net",
             "HOST_PROJECT_DIR": "/repo",
             "MINIO_ENDPOINT": "http://minio:9000",
@@ -78,6 +82,8 @@ class TestLoadPipelineSettings:
 
         assert settings.img_simulator == "sim:dev"
         assert settings.img_spark == "spark:dev"
+        assert settings.img_delivery == "delivery:dev"
+        assert settings.img_ml_mock == "ml-mock:dev"
         assert settings.network_name == "platform-net"
         assert settings.host_project_dir == "/repo"
         assert settings.task_environment == {
@@ -117,6 +123,8 @@ class TestLoadPipelineSettings:
         assert set(data["docker"].values()) == {
             "IMG_SIMULATOR",
             "IMG_SPARK",
+            "IMG_DELIVERY",
+            "IMG_ML_MOCK",
             "NETWORK_NAME",
             "HOST_PROJECT_DIR",
         }
@@ -128,5 +136,8 @@ class TestLoadPipelineSettings:
             "BRONZE_BUCKET",
             "SILVER_BUCKET",
             "GOLD_BUCKET",
+            "DELIVERED_BUCKET",
             "ROLLING_WINDOW_DAYS",
+            "SCHEMA_VERSION",
+            "DELIVERY_ENCRYPTION_KEY",
         ]

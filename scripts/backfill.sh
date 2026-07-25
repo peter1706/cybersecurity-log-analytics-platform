@@ -7,10 +7,11 @@
 # It runs the same task images the Airflow DAG launches, directly via `docker
 # run` on the platform network (so an arbitrary --day can be passed, which
 # `airflow tasks test` cannot easily override). Ordering matters: every source is
-# landed through Silver for the whole range first, then auth Gold is built per
-# anchor day in ascending order so each anchor's rolling window sees the days
-# before it. Re-running is safe -- landing keys are fixed and Delta writes use
-# dynamic partition overwrite, so no day is double-counted.
+# landed through Silver for the whole range first, then the unified Gold table is
+# built per anchor day in ascending order so each anchor's rolling window sees the
+# days before it, then each anchor day is delivered and consumed. Re-running is
+# safe -- landing/delivered keys are fixed and Delta writes use dynamic partition
+# overwrite, so no day is double-counted.
 set -euo pipefail
 
 START_DAY="${1:-0}"
@@ -26,6 +27,8 @@ set -a; . ./.env; set +a
 NETWORK="${NETWORK_NAME:-platform-net}"
 SIM_IMG="${IMG_SIMULATOR:-clap-lanl-simulator:dev}"
 SPARK_IMG="${IMG_SPARK:-clap-spark-processor:dev}"
+DELIVERY_IMG="${IMG_DELIVERY:-clap-delivery:dev}"
+ML_MOCK_IMG="${IMG_ML_MOCK:-clap-ml-mock:dev}"
 SUBSET_DIR="$(pwd)/data/subset"
 SOURCES=(auth proc flows dns)
 
@@ -37,6 +40,8 @@ fi
 run_sim() { docker run --rm --network "$NETWORK" --env-file .env \
   -v "$SUBSET_DIR:/data/subset:ro" "$SIM_IMG" "$@"; }
 run_spark() { docker run --rm --network "$NETWORK" --env-file .env "$SPARK_IMG" "$@"; }
+run_delivery() { docker run --rm --network "$NETWORK" --env-file .env "$DELIVERY_IMG" "$@"; }
+run_consume() { docker run --rm --network "$NETWORK" --env-file .env "$ML_MOCK_IMG" "$@"; }
 
 echo "==> Seeding landing for days ${START_DAY}..${END_DAY} (all sources, one pass each)"
 for source in "${SOURCES[@]}"; do
@@ -54,6 +59,12 @@ done
 echo "==> Gold (computer_features) per anchor day -- rolling window = ${ROLLING_WINDOW_DAYS:-7}d"
 for day in $(seq "$START_DAY" "$END_DAY"); do
   run_spark silver_to_gold --day "$day"
+done
+
+echo "==> Deliver + consume per anchor day"
+for day in $(seq "$START_DAY" "$END_DAY"); do
+  run_delivery --day "$day"
+  run_consume --day "$day"
 done
 
 echo "==> Backfill complete for anchor days ${START_DAY}..${END_DAY}."

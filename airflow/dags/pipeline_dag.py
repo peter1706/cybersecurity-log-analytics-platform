@@ -104,13 +104,40 @@ class ComputerFeaturesOperator(_PlatformDockerOperator):
         )
 
 
+class DeliveryOperator(_PlatformDockerOperator):
+    """Delivers the anchor day's Gold partition to the ``delivered`` bucket."""
+
+    def __init__(self, *, settings: PipelineSettings, day: str = DAY_TEMPLATE, **kwargs):
+        super().__init__(
+            settings=settings,
+            task_id="deliver",
+            image=settings.img_delivery,
+            command=["--day", day],
+            **kwargs,
+        )
+
+
+class MlConsumeOperator(_PlatformDockerOperator):
+    """Runs the ml-mock consumer to verify the delivered partition and mock-retrain."""
+
+    def __init__(self, *, settings: PipelineSettings, day: str = DAY_TEMPLATE, **kwargs):
+        super().__init__(
+            settings=settings,
+            task_id="ml_consume",
+            image=settings.img_ml_mock,
+            command=["--day", day],
+            **kwargs,
+        )
+
+
 def build_daily_pipeline(settings: PipelineSettings | None = None) -> DAG:
     """Assemble and return the daily_pipeline DAG.
 
     Each source runs an independent landing -> Bronze -> Silver chain inside its
     own TaskGroup (task ids namespaced by the group, e.g. ``auth.bronze_to_silver``).
     A single cross-source ``silver_to_gold`` step then joins every source's Silver
-    into the unified ``computer_features`` Gold table.
+    into the unified ``computer_features`` Gold table, which is handed off via
+    ``deliver`` (encrypt + manifest) and verified by ``ml_consume``.
     """
     settings = settings or load_pipeline_settings()
 
@@ -142,5 +169,10 @@ def build_daily_pipeline(settings: PipelineSettings | None = None) -> DAG:
         silver_to_gold = ComputerFeaturesOperator(settings=settings)
         for silver_task in silver_tasks:
             silver_task >> silver_to_gold
+
+        # Gold -> encrypted delivery -> consumer verification + mock retrain.
+        deliver = DeliveryOperator(settings=settings)
+        ml_consume = MlConsumeOperator(settings=settings)
+        silver_to_gold >> deliver >> ml_consume
 
     return dag

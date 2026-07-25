@@ -19,5 +19,5 @@ Job (c) is a single cross-source job:
   Per-source features are pure builders (`*_computer_features`) stitched together in
   `transforms/features.py`; counters/sums default to `0`, undefined ratios stay
   `NULL`, and `source_present_*` flags record per-source window availability
-  (approximate until the governance catalog lands). Partitioned by
+  (approximated from partition existence). Partitioned by
   `(window_days, anchor_day)`.
