@@ -12,14 +12,79 @@ from pipeline_settings import PipelineSettings, load_pipeline_settings
 
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.sdk import DAG, TaskGroup
+from catalog import CatalogClient, JobRun
 
 SOURCES = ("auth", "proc", "flows", "dns")
 DAY_TEMPLATE = "{{ params.day }}"
+
+
+def _iso(value) -> str | None:
+    """Return an ISO-8601 string for a datetime, or ``None``."""
+    return value.isoformat() if value is not None else None
+
+
+def build_job_run(context: dict, status: str) -> JobRun:
+    """Build a ``job_runs`` record from an Airflow callback context (pure).
+
+    ``task_id`` is group-namespaced (e.g. ``auth.land_to_bronze``); the leading
+    group (when present) is the source and the trailing segment is the logical job.
+    """
+    ti = context.get("task_instance") or context.get("ti")
+    dag_run = context.get("dag_run")
+    params = context.get("params") or {}
+    exception = context.get("exception")
+
+    task_id = getattr(ti, "task_id", "") or ""
+    parts = task_id.split(".")
+    source = parts[0] if len(parts) > 1 else None
+    job = parts[-1] if parts else task_id
+
+    duration = getattr(ti, "duration", None)
+    day = params.get("day")
+    return JobRun(
+        dag_id=getattr(ti, "dag_id", "") or "",
+        task_id=task_id,
+        run_id=getattr(ti, "run_id", None) or getattr(dag_run, "run_id", "") or "",
+        job=job,
+        status=status,
+        source=source,
+        day=int(day) if day is not None else None,
+        try_number=getattr(ti, "try_number", 1) or 1,
+        error=str(exception) if exception else None,
+        started_at=_iso(getattr(ti, "start_date", None)),
+        finished_at=_iso(getattr(ti, "end_date", None)),
+        duration_ms=int(duration * 1000) if duration is not None else None,
+    )
+
+
+def _record_job_run(context: dict, status: str) -> None:
+    """Best-effort ``job_runs`` telemetry write from a task callback.
+
+    Unlike the in-container data-lineage writes (which fail the task), a job-run
+    row is orchestration telemetry: a callback cannot fail an already-finished
+    task, so a catalog blip is logged rather than raised.
+    """
+    try:
+        with CatalogClient.connect() as catalog:
+            catalog.record_job_run(build_job_run(context, status))
+    except Exception as exc:  # noqa: BLE001 - telemetry must not mask task outcome
+        print(f"job_run governance write failed ({status}): {exc}", flush=True)
+
+
+def _on_success_callback(context: dict) -> None:
+    _record_job_run(context, "success")
+
+
+def _on_failure_callback(context: dict) -> None:
+    _record_job_run(context, "failed")
+
 
 DEFAULT_ARGS = {
     "owner": "data-eng",
     "retries": 2,
     "retry_delay": timedelta(seconds=30),
+    "on_success_callback": _on_success_callback,
+    "on_failure_callback": _on_failure_callback,
 }
 
 

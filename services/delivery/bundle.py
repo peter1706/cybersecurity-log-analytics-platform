@@ -17,6 +17,8 @@ from datetime import UTC, datetime
 
 from cryptography.fernet import Fernet
 
+from catalog import DeliveryManifest
+
 # Delivered schema, in contract order. This is the producer side of the
 # data-science interface contract; the consumer (ml-mock) keeps its own copy and a
 # unit test asserts both equal the spark-processor's ``COMPUTER_FEATURE_COLUMNS``
@@ -144,3 +146,20 @@ def build_manifest(
 def manifest_bytes(manifest: dict) -> bytes:
     """Serialize a manifest to stable, pretty JSON bytes."""
     return json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
+
+
+def manifest_record(manifest: dict) -> DeliveryManifest:
+    """Map a delivery manifest dict to its governance-catalog record (pure)."""
+    encryption = manifest.get("encryption", {})
+    return DeliveryManifest(
+        dataset=manifest["dataset"],
+        dataset_version=manifest["dataset_version"],
+        schema_version=manifest["schema_version"],
+        window_days=manifest["window_days"],
+        anchor_day=manifest["anchor_day"],
+        record_count=manifest["record_count"],
+        checksum_sha256=manifest["checksum_sha256"],
+        encryption_scheme=encryption.get("scheme"),
+        encryption_key_id=encryption.get("key_id"),
+        data_object=manifest.get("data_object"),
+    )

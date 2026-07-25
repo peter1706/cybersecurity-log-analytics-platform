@@ -2,7 +2,6 @@
 
 import os
 
-from delta import configure_spark_with_delta_pip
 from pyspark.sql import SparkSession
 
 HADOOP_AWS = "org.apache.hadoop:hadoop-aws:3.3.4"
@@ -10,6 +9,10 @@ HADOOP_AWS = "org.apache.hadoop:hadoop-aws:3.3.4"
 
 def build_spark(app_name: str) -> SparkSession:
     """Return a SparkSession configured for Delta Lake on MinIO over s3a."""
+    # Lazy import: keeps this module (and the pure helpers/job record builders
+    # that import it) importable without delta-spark installed.
+    from delta import configure_spark_with_delta_pip
+
     endpoint = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
     access = os.environ["MINIO_ROOT_USER"]
     secret = os.environ["MINIO_ROOT_PASSWORD"]
@@ -42,6 +45,11 @@ def build_spark(app_name: str) -> SparkSession:
 def bucket(layer: str) -> str:
     """Return the bucket name for a layer (env override or the layer name)."""
     return os.environ.get(f"{layer.upper()}_BUCKET", layer)
+
+
+def schema_version() -> str:
+    """Schema version stamped on governance records (env ``SCHEMA_VERSION``)."""
+    return os.environ.get("SCHEMA_VERSION", "v1")
 
 
 def rolling_window_days() -> int:

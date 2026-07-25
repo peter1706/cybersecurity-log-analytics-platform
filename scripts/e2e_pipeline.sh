@@ -18,7 +18,13 @@ docker compose --profile build build
 
 echo "==> Starting core services"
 docker compose up -d minio mc-init airflow-postgres airflow-init \
-  airflow-api-server airflow-scheduler airflow-dag-processor
+  airflow-api-server airflow-scheduler airflow-dag-processor postgres-catalog
+
+echo "==> Applying governance-catalog migrations"
+# One-shot: waits for postgres-catalog to be healthy, applies every migration in
+# order, then exits. Idempotent, so re-running the pipeline is safe. Every task
+# below writes lineage/schema/job-run rows, so the schema must exist first.
+docker compose run --rm catalog-migrate
 
 echo "==> Waiting for the Airflow scheduler to be ready"
 for _ in $(seq 1 60); do
