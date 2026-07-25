@@ -33,6 +33,11 @@ class MedallionJob(ABC):
     # Layer boundary this job crosses, stamped on the lineage record.
     from_layer: str = ""
     to_layer: str = ""
+    # Whether to cache the input DataFrame. Worth it when the input is scanned
+    # more than once (default validate_upstream checksums it, then transform
+    # reads it again). LandToBronzeJob sets this False: its checksum is over the
+    # raw bytes (a separate binaryFile read), so the CSV input is scanned once.
+    cache_input: bool = True
 
     def __init__(self, spark: SparkSession, source: SourceSpec, day: int):
         self.spark = spark
@@ -119,23 +124,44 @@ class MedallionJob(ABC):
         )
 
     def run(self) -> int:
-        """Execute the stage and return the row count written."""
+        """Execute the stage and return the row count written.
+
+        The output ``result`` is cached because three actions consume it
+        (``count`` for the empty-guard/lineage, ``write``, and the content
+        checksum); without caching Spark would recompute the whole transform
+        three times. The input is cached too when ``cache_input`` is set (it is
+        scanned by ``validate_upstream`` and again by ``transform``). Both are
+        unpersisted in ``finally`` so a failure never leaks cached blocks.
+        """
         with CatalogClient.connect() as catalog:
             input_df = self.read()
-            # Validate the upstream checksum before consuming the input, so
-            # corrupt/tampered upstream data fails here rather than propagating.
-            self.validate_upstream(catalog, input_df)
-            result = self.transform(input_df)
-            count = result.count()
-            if count == 0:
-                raise ValueError(f"{self.name}: 0 rows for {self.source.name} day={self.day}")
-            self.write(result)
-            # Record checksum + lineage + schema as part of the same task, after a
-            # successful write. A catalog failure fails the task (not optional).
-            lineage, schema = self.governance_records(count, result.columns)
-            catalog.record_checksum(self.checksum_record(dataframe_checksum(result), count))
-            catalog.record_lineage(lineage)
-            catalog.register_schema(schema)
+            if self.cache_input:
+                input_df = input_df.persist()
+            try:
+                # Validate the upstream checksum before consuming the input, so
+                # corrupt/tampered upstream data fails here rather than propagating.
+                self.validate_upstream(catalog, input_df)
+                result = self.transform(input_df).persist()
+                try:
+                    count = result.count()
+                    if count == 0:
+                        raise ValueError(
+                            f"{self.name}: 0 rows for {self.source.name} day={self.day}"
+                        )
+                    self.write(result)
+                    # Record checksum + lineage + schema as part of the same task,
+                    # after a successful write. A catalog failure fails the task.
+                    lineage, schema = self.governance_records(count, result.columns)
+                    catalog.record_checksum(
+                        self.checksum_record(dataframe_checksum(result), count)
+                    )
+                    catalog.record_lineage(lineage)
+                    catalog.register_schema(schema)
+                finally:
+                    result.unpersist()
+            finally:
+                if self.cache_input:
+                    input_df.unpersist()
         print(
             f"{self.name}: wrote {count:,} rows -> {self.target_path()} "
             f"(source={self.source.name}, day={self.day})",
@@ -150,6 +176,10 @@ class LandToBronzeJob(MedallionJob):
     name = "land_to_bronze"
     from_layer = "landing"
     to_layer = "bronze"
+    # The CSV input is read once (by transform); the checksum is over the raw
+    # object bytes via a separate binaryFile read, so caching the CSV would only
+    # waste memory on the largest, single-use input.
+    cache_input = False
 
     def read(self) -> DataFrame:
         src = landing_prefix(self.source.name, self.day)
@@ -343,40 +373,55 @@ class ComputerFeaturesJob:
         )
 
         with CatalogClient.connect() as catalog:
-            frames = {src: self._windowed_silver(src, start_day) for src in self.sources}
-            # Validate every upstream Silver partition before reading it.
-            self._validate_silver(catalog, frames)
-            source_present = {
-                src: self._source_present(frames[src], expected_days) for src in self.sources
+            # Cache each source's windowed Silver: it is scanned by checksum
+            # validation (per day), the presence check, and the feature builder.
+            # Without caching each source would be re-read from Silver 3+ times.
+            frames = {
+                src: self._windowed_silver(src, start_day).persist() for src in self.sources
             }
+            features = None
+            try:
+                # Validate every upstream Silver partition before reading it.
+                self._validate_silver(catalog, frames)
+                source_present = {
+                    src: self._source_present(frames[src], expected_days)
+                    for src in self.sources
+                }
 
-            features = assemble_computer_features(
-                auth=self._builders["auth"](frames["auth"]),
-                proc=self._builders["proc"](frames["proc"]),
-                flows=self._builders["flows"](frames["flows"]),
-                dns=self._builders["dns"](frames["dns"]),
-                anchor_day=self.day,
-                window_days=window,
-                source_present=source_present,
-            )
+                # Cached: consumed by the empty-guard count, the write, and the
+                # content checksum.
+                features = assemble_computer_features(
+                    auth=self._builders["auth"](frames["auth"]),
+                    proc=self._builders["proc"](frames["proc"]),
+                    flows=self._builders["flows"](frames["flows"]),
+                    dns=self._builders["dns"](frames["dns"]),
+                    anchor_day=self.day,
+                    window_days=window,
+                    source_present=source_present,
+                ).persist()
 
-            count = features.count()
-            if count == 0:
-                raise ValueError(f"{self.name}: 0 rows for anchor_day={self.day}")
+                count = features.count()
+                if count == 0:
+                    raise ValueError(f"{self.name}: 0 rows for anchor_day={self.day}")
 
-            target = table_path("gold", self.gold_table)
-            (
-                features.write.format("delta")
-                .mode("overwrite")
-                .partitionBy("window_days", "anchor_day")
-                .save(target)
-            )
-            lineage, schema = self.governance_records(count, features.columns, window)
-            catalog.record_checksum(
-                self.checksum_record(dataframe_checksum(features), count, window)
-            )
-            catalog.record_lineage(lineage)
-            catalog.register_schema(schema)
+                target = table_path("gold", self.gold_table)
+                (
+                    features.write.format("delta")
+                    .mode("overwrite")
+                    .partitionBy("window_days", "anchor_day")
+                    .save(target)
+                )
+                lineage, schema = self.governance_records(count, features.columns, window)
+                catalog.record_checksum(
+                    self.checksum_record(dataframe_checksum(features), count, window)
+                )
+                catalog.record_lineage(lineage)
+                catalog.register_schema(schema)
+            finally:
+                if features is not None:
+                    features.unpersist()
+                for frame in frames.values():
+                    frame.unpersist()
         print(
             f"{self.name}: wrote {count:,} rows -> {target} "
             f"(anchor_day={self.day}, window={window}d, present={source_present})",

@@ -139,6 +139,8 @@ class TestLoadPipelineSettings:
             "DELIVERED_BUCKET",
             "ROLLING_WINDOW_DAYS",
             "SCHEMA_VERSION",
+            "SPARK_DRIVER_MEMORY",
+            "SPARK_SQL_SHUFFLE_PARTITIONS",
             "DELIVERY_ENCRYPTION_KEY",
             "CATALOG_DB_HOST",
             "CATALOG_DB_PORT",
