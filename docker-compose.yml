@@ -35,6 +35,13 @@ x-airflow-common: &airflow-common
     ROLLING_WINDOW_DAYS: ${ROLLING_WINDOW_DAYS:-7}
     SCHEMA_VERSION: ${SCHEMA_VERSION:-v1}
     DELIVERY_ENCRYPTION_KEY: ${DELIVERY_ENCRYPTION_KEY}
+    # Governance catalog (postgres-catalog) — forwarded to task containers that
+    # record lineage/checksums/manifests, and used by Airflow job-run callbacks.
+    CATALOG_DB_HOST: ${CATALOG_DB_HOST}
+    CATALOG_DB_PORT: ${CATALOG_DB_PORT}
+    CATALOG_DB_NAME: ${CATALOG_DB_NAME}
+    CATALOG_DB_USER: ${CATALOG_DB_USER}
+    CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - airflow-logs:/opt/airflow/logs
@@ -77,6 +84,49 @@ services:
       mc mb --ignore-existing local/${GOLD_BUCKET} &&
       mc mb --ignore-existing local/${DELIVERED_BUCKET} &&
       echo 'buckets ready';
+      "
+    networks:
+      - platform-net
+
+  # Governance catalog: lineage, schema registry, job-run logs, checksums, and
+  # delivery manifests. A separate instance from airflow-postgres so orchestration
+  # state never mixes with governance data. Kept on platform-net for now; it moves
+  # onto an isolated catalog network later.
+  postgres-catalog:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ${CATALOG_DB_USER}
+      POSTGRES_PASSWORD: ${CATALOG_DB_PASSWORD}
+      POSTGRES_DB: ${CATALOG_DB_NAME}
+    volumes:
+      - postgres-catalog-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${CATALOG_DB_USER}", "-d", "${CATALOG_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - platform-net
+
+  # One-shot: wait for the catalog, apply every migration in filename order, exit.
+  # Migrations are idempotent (CREATE ... IF NOT EXISTS), so re-running is safe.
+  catalog-migrate:
+    image: postgres:15
+    depends_on:
+      postgres-catalog:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${CATALOG_DB_PASSWORD}
+    volumes:
+      - ./catalog/migrations:/migrations:ro
+    entrypoint: >
+      /bin/bash -c "
+      set -e;
+      for f in $$(ls /migrations/*.sql | sort); do
+        echo \"applying $$f\";
+        psql -v ON_ERROR_STOP=1 -h postgres-catalog -U ${CATALOG_DB_USER} -d ${CATALOG_DB_NAME} -f \"$$f\";
+      done;
+      echo 'catalog migrations applied';
       "
     networks:
       - platform-net
@@ -192,6 +242,7 @@ services:
 volumes:
   minio-data:
   airflow-postgres-data:
+  postgres-catalog-data:
   airflow-logs:
   airflow-simple-auth:
 
