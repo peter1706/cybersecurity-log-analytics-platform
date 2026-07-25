@@ -196,6 +196,20 @@ def test_governance_job_runs_persisted():
     assert _catalog_count("job_runs", "status = 'success'") > 0
 
 
+def test_checksum_chain_persisted():
+    """Every layer records a content checksum (landing -> Bronze -> Silver -> Gold)."""
+    assert _catalog_count("checksums", "layer = 'landing'") > 0
+    assert _catalog_count("checksums", "layer = 'bronze'") > 0
+    assert _catalog_count("checksums", "layer = 'silver'") > 0
+    assert (
+        _catalog_count(
+            "checksums",
+            f"layer = 'gold' AND window_days = {WINDOW_DAYS} AND day = {ANCHOR_DAY}",
+        )
+        == 1
+    )
+
+
 @pytest.mark.parametrize("source", SILVER_SOURCES)
 def test_silver_source_has_rows(source):
     rows = _table_row_count(_client(), SILVER_BUCKET, source)

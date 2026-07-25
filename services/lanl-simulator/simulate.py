@@ -20,6 +20,7 @@ gzip mtime), so re-running a day overwrites the same object.
 
 import argparse
 import gzip
+import hashlib
 import io
 import os
 import sys
@@ -27,7 +28,7 @@ import sys
 import boto3
 from botocore.client import Config
 
-from catalog import CatalogClient, Lineage
+from catalog import CatalogClient, Checksum, Lineage
 
 SECONDS_PER_DAY = 86400
 SOURCES = ("auth", "proc", "flows", "dns")
@@ -42,6 +43,22 @@ def landing_lineage(source: str, day: int, record_count: int, schema_version: st
         to_layer="landing",
         record_count=record_count,
         schema_version=schema_version,
+    )
+
+
+def landing_checksum(source: str, day: int, blob: bytes, record_count: int) -> Checksum:
+    """Build the raw-landing checksum record over the uploaded object bytes (pure).
+
+    The digest is over the exact bytes uploaded (deterministic: fixed gzip
+    mtime), so the land_to_bronze job can re-read the object and verify it before
+    parsing -- the first link in the integrity chain.
+    """
+    return Checksum(
+        layer="landing",
+        source=source,
+        day=day,
+        checksum=hashlib.sha256(blob).hexdigest(),
+        record_count=record_count,
     )
 
 
@@ -183,6 +200,7 @@ class LandingSimulator:
                 key = self.object_key(source, d)
                 self._client.put_object(Bucket=self.bucket, Key=key, Body=blob)
                 catalog.record_lineage(landing_lineage(source, d, counts[d], self.schema_version))
+                catalog.record_checksum(landing_checksum(source, d, blob, counts[d]))
                 print(
                     f"lanl-simulator: {source} day={d} -> s3://{self.bucket}/{key} "
                     f"({len(blob):,} bytes, {counts[d]:,} rows)",
