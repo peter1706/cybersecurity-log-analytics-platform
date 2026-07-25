@@ -1,0 +1,3 @@
+# Runtime dependency of the catalog client. Kept minimal (driver only) so it can
+# be layered into any service image that records governance metadata.
+psycopg2-binary==2.9.9
