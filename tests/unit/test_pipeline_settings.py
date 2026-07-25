@@ -140,4 +140,9 @@ class TestLoadPipelineSettings:
             "ROLLING_WINDOW_DAYS",
             "SCHEMA_VERSION",
             "DELIVERY_ENCRYPTION_KEY",
+            "CATALOG_DB_HOST",
+            "CATALOG_DB_PORT",
+            "CATALOG_DB_NAME",
+            "CATALOG_DB_USER",
+            "CATALOG_DB_PASSWORD",
         ]
