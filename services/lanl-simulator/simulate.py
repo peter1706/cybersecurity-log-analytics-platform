@@ -20,6 +20,7 @@ gzip mtime), so re-running a day overwrites the same object.
 
 import argparse
 import gzip
+import hashlib
 import io
 import os
 import sys
@@ -27,8 +28,38 @@ import sys
 import boto3
 from botocore.client import Config
 
+from catalog import CatalogClient, Checksum, Lineage
+
 SECONDS_PER_DAY = 86400
 SOURCES = ("auth", "proc", "flows", "dns")
+
+
+def landing_lineage(source: str, day: int, record_count: int, schema_version: str) -> Lineage:
+    """Build the raw-landing lineage record for one uploaded source/day (pure)."""
+    return Lineage(
+        source=source,
+        day=day,
+        from_layer=None,
+        to_layer="landing",
+        record_count=record_count,
+        schema_version=schema_version,
+    )
+
+
+def landing_checksum(source: str, day: int, blob: bytes, record_count: int) -> Checksum:
+    """Build the raw-landing checksum record over the uploaded object bytes (pure).
+
+    The digest is over the exact bytes uploaded (deterministic: fixed gzip
+    mtime), so the land_to_bronze job can re-read the object and verify it before
+    parsing -- the first link in the integrity chain.
+    """
+    return Checksum(
+        layer="landing",
+        source=source,
+        day=day,
+        checksum=hashlib.sha256(blob).hexdigest(),
+        record_count=record_count,
+    )
 
 
 class LandingSimulator:
@@ -42,9 +73,15 @@ class LandingSimulator:
         secret_key: str,
         bucket: str,
         subset_dir: str,
+        schema_version: str = "v1",
+        catalog_factory=None,
     ):
         self.bucket = bucket
         self.subset_dir = subset_dir
+        self.schema_version = schema_version
+        # Factory returning a governance-catalog client context manager. Default
+        # opens a real connection; tests inject a fake.
+        self._catalog_factory = catalog_factory or CatalogClient.connect
         self._client = boto3.client(
             "s3",
             endpoint_url=endpoint,
@@ -63,6 +100,7 @@ class LandingSimulator:
             secret_key=os.environ["MINIO_ROOT_PASSWORD"],
             bucket=os.environ.get("LANDING_BUCKET", "landing"),
             subset_dir=subset_dir,
+            schema_version=os.environ.get("SCHEMA_VERSION", "v1"),
         )
 
     @staticmethod
@@ -79,13 +117,16 @@ class LandingSimulator:
         """Return the local subset path for a source."""
         return os.path.join(self.subset_dir, f"{source}.txt.gz")
 
-    def filter_days(self, source: str, start: int, end: int) -> dict[int, bytes]:
-        """Return one gzip-compressed blob per day for the inclusive range.
+    def filter_days(
+        self, source: str, start: int, end: int
+    ) -> tuple[dict[int, bytes], dict[int, int]]:
+        """Return per-day gzip blobs and per-day row counts for the inclusive range.
 
         Reads the time-sorted source subset once, keeping rows whose derived day
         falls in ``[start, end]`` and grouping them by day. Returns a mapping of
-        day -> gzip blob; days with no rows are simply absent. Stops reading as
-        soon as the stream passes ``end``.
+        day -> gzip blob and a parallel mapping of day -> row count (the count is
+        recorded as landing lineage); days with no rows are simply absent. Stops
+        reading as soon as the stream passes ``end``.
         """
         src_path = self.source_path(source)
         if not os.path.exists(src_path):
@@ -105,14 +146,16 @@ class LandingSimulator:
                 lines_by_day.setdefault(d, []).append(line if line.endswith("\n") else line + "\n")
 
         blobs: dict[int, bytes] = {}
+        counts: dict[int, int] = {}
         for d, lines in lines_by_day.items():
             buf = io.BytesIO()
             with gzip.GzipFile(fileobj=buf, mode="wb", mtime=0) as out:
                 for line in lines:
                     out.write(line.encode("utf-8"))
             blobs[d] = buf.getvalue()
+            counts[d] = len(lines)
             print(f"  filtered {len(lines):,} rows for day {d}", flush=True)
-        return blobs
+        return blobs, counts
 
     def ensure_bucket(self) -> None:
         """Create the landing bucket if it does not already exist."""
@@ -138,27 +181,32 @@ class LandingSimulator:
         if end < day:
             raise ValueError(f"--day-end ({end}) must be >= --day ({day})")
 
-        blobs = self.filter_days(source, day, end)
+        blobs, counts = self.filter_days(source, day, end)
         self.ensure_bucket()
         keys: list[str] = []
-        for d in range(day, end + 1):
-            blob = blobs.get(d)
-            if blob is None:
-                if day == end:
-                    raise ValueError(
-                        f"no rows found for day {d} in {self.source_path(source)}; "
-                        "check the subset day range"
-                    )
-                print(f"  day {d}: no rows in subset, skipping", flush=True)
-                continue
-            key = self.object_key(source, d)
-            self._client.put_object(Bucket=self.bucket, Key=key, Body=blob)
-            print(
-                f"lanl-simulator: {source} day={d} -> s3://{self.bucket}/{key} "
-                f"({len(blob):,} bytes)",
-                flush=True,
-            )
-            keys.append(key)
+        # Record raw-landing lineage as part of the same task, after each upload.
+        # A catalog failure fails the task (governance is not optional).
+        with self._catalog_factory() as catalog:
+            for d in range(day, end + 1):
+                blob = blobs.get(d)
+                if blob is None:
+                    if day == end:
+                        raise ValueError(
+                            f"no rows found for day {d} in {self.source_path(source)}; "
+                            "check the subset day range"
+                        )
+                    print(f"  day {d}: no rows in subset, skipping", flush=True)
+                    continue
+                key = self.object_key(source, d)
+                self._client.put_object(Bucket=self.bucket, Key=key, Body=blob)
+                catalog.record_lineage(landing_lineage(source, d, counts[d], self.schema_version))
+                catalog.record_checksum(landing_checksum(source, d, blob, counts[d]))
+                print(
+                    f"lanl-simulator: {source} day={d} -> s3://{self.bucket}/{key} "
+                    f"({len(blob):,} bytes, {counts[d]:,} rows)",
+                    flush=True,
+                )
+                keys.append(key)
 
         if not keys:
             raise ValueError(

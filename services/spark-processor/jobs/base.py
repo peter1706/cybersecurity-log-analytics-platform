@@ -6,12 +6,16 @@ cross-cutting concerns (checksum + lineage, retries/alerts) attach in one place
 instead of being copied per stage.
 """
 
+import hashlib
 from abc import ABC, abstractmethod
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from .common import landing_prefix, rolling_window_days, table_path
+from catalog import CatalogClient, Checksum, Lineage, SchemaRegistration
+
+from .checksums import dataframe_checksum
+from .common import landing_prefix, rolling_window_days, schema_version, table_path
 from .sources import SourceSpec
 from .transforms import (
     assemble_computer_features,
@@ -26,11 +30,68 @@ class MedallionJob(ABC):
     """Template for a single Medallion transition for one source and day."""
 
     name: str = "medallion_job"
+    # Layer boundary this job crosses, stamped on the lineage record.
+    from_layer: str = ""
+    to_layer: str = ""
 
     def __init__(self, spark: SparkSession, source: SourceSpec, day: int):
         self.spark = spark
         self.source = source
         self.day = day
+
+    def governance_records(
+        self, count: int, columns: list[str]
+    ) -> tuple[Lineage, SchemaRegistration]:
+        """Build the lineage + schema-registry records for this write (pure)."""
+        version = schema_version()
+        lineage = Lineage(
+            source=self.source.name,
+            day=self.day,
+            from_layer=self.from_layer,
+            to_layer=self.to_layer,
+            record_count=count,
+            schema_version=version,
+        )
+        schema = SchemaRegistration(
+            source=self.source.name,
+            layer=self.to_layer,
+            schema_version=version,
+            columns=list(columns),
+        )
+        return lineage, schema
+
+    def checksum_record(self, checksum: str, count: int) -> Checksum:
+        """Build the content-checksum record for this write (pure)."""
+        return Checksum(
+            layer=self.to_layer,
+            source=self.source.name,
+            day=self.day,
+            checksum=checksum,
+            record_count=count,
+        )
+
+    def validate_upstream(self, catalog: CatalogClient, input_df: DataFrame) -> None:
+        """Verify the upstream partition's stored checksum before consuming it.
+
+        Default: recompute the content checksum of the just-read upstream
+        DataFrame and compare it to the value the upstream stage recorded. A
+        missing record or a mismatch fails the task, so corrupt data cannot
+        propagate downstream. ``LandToBronzeJob`` overrides this because its
+        upstream (raw landing) is checksummed over bytes, not rows.
+        """
+        stored = catalog.get_checksum(self.from_layer, self.day, self.source.name)
+        if stored is None:
+            raise ValueError(
+                f"{self.name}: no {self.from_layer} checksum recorded for "
+                f"{self.source.name} day={self.day}"
+            )
+        actual = dataframe_checksum(input_df)
+        if actual != stored:
+            raise ValueError(
+                f"{self.name}: {self.from_layer} checksum mismatch for "
+                f"{self.source.name} day={self.day} "
+                f"(expected {stored[:12]}..., got {actual[:12]}...)"
+            )
 
     @abstractmethod
     def read(self) -> DataFrame:
@@ -59,11 +120,22 @@ class MedallionJob(ABC):
 
     def run(self) -> int:
         """Execute the stage and return the row count written."""
-        result = self.transform(self.read())
-        count = result.count()
-        if count == 0:
-            raise ValueError(f"{self.name}: 0 rows for {self.source.name} day={self.day}")
-        self.write(result)
+        with CatalogClient.connect() as catalog:
+            input_df = self.read()
+            # Validate the upstream checksum before consuming the input, so
+            # corrupt/tampered upstream data fails here rather than propagating.
+            self.validate_upstream(catalog, input_df)
+            result = self.transform(input_df)
+            count = result.count()
+            if count == 0:
+                raise ValueError(f"{self.name}: 0 rows for {self.source.name} day={self.day}")
+            self.write(result)
+            # Record checksum + lineage + schema as part of the same task, after a
+            # successful write. A catalog failure fails the task (not optional).
+            lineage, schema = self.governance_records(count, result.columns)
+            catalog.record_checksum(self.checksum_record(dataframe_checksum(result), count))
+            catalog.record_lineage(lineage)
+            catalog.register_schema(schema)
         print(
             f"{self.name}: wrote {count:,} rows -> {self.target_path()} "
             f"(source={self.source.name}, day={self.day})",
@@ -76,11 +148,45 @@ class LandToBronzeJob(MedallionJob):
     """Job (a): landing -> Bronze."""
 
     name = "land_to_bronze"
+    from_layer = "landing"
+    to_layer = "bronze"
 
     def read(self) -> DataFrame:
         src = landing_prefix(self.source.name, self.day)
         print(f"{self.name}: reading {src}", flush=True)
         return self.spark.read.option("header", "false").csv(src)
+
+    def validate_upstream(self, catalog: CatalogClient, input_df: DataFrame) -> None:
+        """Validate the raw-landing checksum, taken over the object bytes.
+
+        The simulator records ``sha256`` of the uploaded (gzip) object, so this
+        reads the same bytes back via Spark's ``binaryFile`` reader and compares
+        digests -- the landing layer is raw bytes, not a row-based table.
+        """
+        stored = catalog.get_checksum("landing", self.day, self.source.name)
+        if stored is None:
+            raise ValueError(
+                f"{self.name}: no landing checksum recorded for "
+                f"{self.source.name} day={self.day}"
+            )
+        files = (
+            self.spark.read.format("binaryFile")
+            .load(landing_prefix(self.source.name, self.day))
+            .select("content")
+            .collect()
+        )
+        if len(files) != 1:
+            raise ValueError(
+                f"{self.name}: expected exactly one landing object for "
+                f"{self.source.name} day={self.day}, found {len(files)}"
+            )
+        actual = hashlib.sha256(files[0]["content"]).hexdigest()
+        if actual != stored:
+            raise ValueError(
+                f"{self.name}: landing checksum mismatch for "
+                f"{self.source.name} day={self.day} "
+                f"(expected {stored[:12]}..., got {actual[:12]}...)"
+            )
 
     def transform(self, df: DataFrame) -> DataFrame:
         return self.source.to_bronze(df)
@@ -96,6 +202,8 @@ class BronzeToSilverJob(MedallionJob):
     """Job (b): Bronze -> Silver."""
 
     name = "bronze_to_silver"
+    from_layer = "bronze"
+    to_layer = "silver"
 
     def read(self) -> DataFrame:
         path = table_path("bronze", self.source.name)
@@ -145,6 +253,63 @@ class ComputerFeaturesJob:
         self.spark = spark
         self.day = day
 
+    def governance_records(
+        self, count: int, columns: list[str], window: int
+    ) -> tuple[Lineage, SchemaRegistration]:
+        """Build the Silver -> Gold lineage + schema-registry records (pure)."""
+        version = schema_version()
+        lineage = Lineage(
+            source=None,
+            day=self.day,
+            from_layer="silver",
+            to_layer="gold",
+            record_count=count,
+            schema_version=version,
+            window_days=window,
+        )
+        schema = SchemaRegistration(
+            source=self.gold_table,
+            layer="gold",
+            schema_version=version,
+            columns=list(columns),
+        )
+        return lineage, schema
+
+    def checksum_record(self, checksum: str, count: int, window: int) -> Checksum:
+        """Build the Gold partition's content-checksum record (pure)."""
+        return Checksum(
+            layer="gold",
+            source=None,
+            day=self.day,
+            window_days=window,
+            checksum=checksum,
+            record_count=count,
+        )
+
+    def _validate_silver(self, catalog: CatalogClient, frames: dict[str, DataFrame]) -> None:
+        """Verify the stored Silver checksum of every present window day per source.
+
+        Each Bronze -> Silver run records a per-(source, day) checksum; the Gold
+        job recomputes it for the days it actually reads and fails on a missing
+        record or a mismatch. Days absent from the window are simply not
+        validated (there is nothing to read).
+        """
+        for source in self.sources:
+            df = frames[source]
+            present_days = sorted({row["day"] for row in df.select("day").distinct().collect()})
+            for day in present_days:
+                stored = catalog.get_checksum("silver", day, source)
+                if stored is None:
+                    raise ValueError(
+                        f"{self.name}: no silver checksum recorded for {source} day={day}"
+                    )
+                actual = dataframe_checksum(df.where(F.col("day") == day))
+                if actual != stored:
+                    raise ValueError(
+                        f"{self.name}: silver checksum mismatch for {source} day={day} "
+                        f"(expected {stored[:12]}..., got {actual[:12]}...)"
+                    )
+
     def _windowed_silver(self, source: str, start_day: int) -> DataFrame:
         """Read one source's Silver rows for the window [start_day, anchor day]."""
         path = table_path("silver", source)
@@ -177,32 +342,41 @@ class ComputerFeaturesJob:
             flush=True,
         )
 
-        frames = {src: self._windowed_silver(src, start_day) for src in self.sources}
-        source_present = {
-            src: self._source_present(frames[src], expected_days) for src in self.sources
-        }
+        with CatalogClient.connect() as catalog:
+            frames = {src: self._windowed_silver(src, start_day) for src in self.sources}
+            # Validate every upstream Silver partition before reading it.
+            self._validate_silver(catalog, frames)
+            source_present = {
+                src: self._source_present(frames[src], expected_days) for src in self.sources
+            }
 
-        features = assemble_computer_features(
-            auth=self._builders["auth"](frames["auth"]),
-            proc=self._builders["proc"](frames["proc"]),
-            flows=self._builders["flows"](frames["flows"]),
-            dns=self._builders["dns"](frames["dns"]),
-            anchor_day=self.day,
-            window_days=window,
-            source_present=source_present,
-        )
+            features = assemble_computer_features(
+                auth=self._builders["auth"](frames["auth"]),
+                proc=self._builders["proc"](frames["proc"]),
+                flows=self._builders["flows"](frames["flows"]),
+                dns=self._builders["dns"](frames["dns"]),
+                anchor_day=self.day,
+                window_days=window,
+                source_present=source_present,
+            )
 
-        count = features.count()
-        if count == 0:
-            raise ValueError(f"{self.name}: 0 rows for anchor_day={self.day}")
+            count = features.count()
+            if count == 0:
+                raise ValueError(f"{self.name}: 0 rows for anchor_day={self.day}")
 
-        target = table_path("gold", self.gold_table)
-        (
-            features.write.format("delta")
-            .mode("overwrite")
-            .partitionBy("window_days", "anchor_day")
-            .save(target)
-        )
+            target = table_path("gold", self.gold_table)
+            (
+                features.write.format("delta")
+                .mode("overwrite")
+                .partitionBy("window_days", "anchor_day")
+                .save(target)
+            )
+            lineage, schema = self.governance_records(count, features.columns, window)
+            catalog.record_checksum(
+                self.checksum_record(dataframe_checksum(features), count, window)
+            )
+            catalog.record_lineage(lineage)
+            catalog.register_schema(schema)
         print(
             f"{self.name}: wrote {count:,} rows -> {target} "
             f"(anchor_day={self.day}, window={window}d, present={source_present})",

@@ -34,6 +34,8 @@ SILVER_SOURCES = ("auth", "proc", "flows", "dns")
 FEATURES_TABLE = "computer_features"
 WINDOW_DAYS = int(os.environ.get("ROLLING_WINDOW_DAYS", "7"))
 ANCHOR_DAY = 0  # scripts/e2e_pipeline.sh runs the pipeline for day 0
+CATALOG_DB_USER = os.environ.get("CATALOG_DB_USER", "catalog")
+CATALOG_DB_NAME = os.environ.get("CATALOG_DB_NAME", "catalog")
 
 
 def _client():
@@ -132,6 +134,79 @@ def _run_task(task: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         check=False,
+    )
+
+
+def _catalog_count(table: str, where: str = "") -> int:
+    """Row count of a governance-catalog table via psql in postgres-catalog."""
+    if shutil.which("docker") is None:
+        pytest.skip("docker not available to query the governance catalog")
+    clause = f" WHERE {where}" if where else ""
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "postgres-catalog",
+            "psql",
+            "-U",
+            CATALOG_DB_USER,
+            "-d",
+            CATALOG_DB_NAME,
+            "-tAc",
+            f"SELECT count(*) FROM {table}{clause};",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"psql count on {table} failed:\n{result.stdout}\n{result.stderr}")
+    return int(result.stdout.strip())
+
+
+def test_governance_lineage_rows_persisted():
+    """Each layer-crossing task records lineage (landing + Bronze/Silver/Gold)."""
+    assert _catalog_count("lineage", "to_layer = 'landing'") > 0
+    assert _catalog_count("lineage", "to_layer = 'bronze'") > 0
+    assert _catalog_count("lineage", "to_layer = 'silver'") > 0
+    assert _catalog_count("lineage", "to_layer = 'gold'") > 0
+
+
+def test_governance_schema_registry_rows_persisted():
+    """The Spark jobs register the written schema for Bronze/Silver/Gold."""
+    assert _catalog_count("schema_registry", "layer = 'gold'") > 0
+
+
+def test_governance_delivery_manifest_persisted():
+    """The deliver task writes a manifest row for the delivered partition."""
+    assert (
+        _catalog_count(
+            "delivery_manifests",
+            f"window_days = {WINDOW_DAYS} AND anchor_day = {ANCHOR_DAY}",
+        )
+        == 1
+    )
+
+
+def test_governance_job_runs_persisted():
+    """Airflow callbacks log a job-run row per executed task."""
+    assert _catalog_count("job_runs", "status = 'success'") > 0
+
+
+def test_checksum_chain_persisted():
+    """Every layer records a content checksum (landing -> Bronze -> Silver -> Gold)."""
+    assert _catalog_count("checksums", "layer = 'landing'") > 0
+    assert _catalog_count("checksums", "layer = 'bronze'") > 0
+    assert _catalog_count("checksums", "layer = 'silver'") > 0
+    assert (
+        _catalog_count(
+            "checksums",
+            f"layer = 'gold' AND window_days = {WINDOW_DAYS} AND day = {ANCHOR_DAY}",
+        )
+        == 1
     )
 
 
