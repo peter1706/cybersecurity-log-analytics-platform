@@ -57,7 +57,7 @@ def auth_computer_features(df_silver: DataFrame) -> DataFrame:
     the destination computer the *inbound* role, so a computer accrues separate
     ``auth_out_*`` and ``auth_in_*`` features. Failure rates are taken only over
     events with a **known** outcome (``auth_success`` not null) and are left NULL
-    when there are none (undefined, per ML-NULL-2) -- distinct from a 0.0 rate.
+    when there are none (undefined) -- distinct from a 0.0 rate.
 
     Counts/distincts may be NULL here for a computer seen in only one role; the
     cross-source assembler coalesces those to 0. Output columns:

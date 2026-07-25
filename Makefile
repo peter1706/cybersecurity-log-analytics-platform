@@ -23,7 +23,7 @@ test-unit: ## Run fast unit tests (no docker required)
 test-e2e: ## Verify Gold output in MinIO (run `make pipeline` first)
 	pytest tests/e2e -m e2e
 
-build: ## Build all images (airflow, simulator, spark-processor)
+build: ## Build all images (airflow, simulator, spark-processor, delivery, ml-mock)
 	docker compose --profile build build
 
 up: ## Start the core platform services

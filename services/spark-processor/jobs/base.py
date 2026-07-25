@@ -158,9 +158,9 @@ class ComputerFeaturesJob:
     def _source_present(df: DataFrame, expected_days: set[int]) -> bool:
         """Approximate availability: every expected window day has at least one row.
 
-        This is a stand-in until the governance catalog records true
-        per-day delivery. It cannot distinguish "delivered but empty" from "not
-        delivered", so an empty-but-delivered day reads as not present.
+        This approximation is based on partition existence: it cannot distinguish
+        "delivered but empty" from "not delivered", so an empty-but-delivered day
+        reads as not present.
         """
         present_days = {row["day"] for row in df.select("day").distinct().collect()}
         return expected_days.issubset(present_days)

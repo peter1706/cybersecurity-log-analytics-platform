@@ -17,6 +17,8 @@ def settings() -> PipelineSettings:
     return PipelineSettings(
         img_simulator="clap-lanl-simulator:test",
         img_spark="clap-spark-processor:test",
+        img_delivery="clap-delivery:test",
+        img_ml_mock="clap-ml-mock:test",
         network_name="platform-net",
         host_project_dir="/repo",
         task_environment={
@@ -27,6 +29,9 @@ def settings() -> PipelineSettings:
             "BRONZE_BUCKET": "bronze",
             "SILVER_BUCKET": "silver",
             "GOLD_BUCKET": "gold",
+            "DELIVERED_BUCKET": "delivered",
+            "SCHEMA_VERSION": "v1",
+            "DELIVERY_ENCRYPTION_KEY": "test-key",
         },
     )
 
@@ -57,7 +62,7 @@ def test_daily_pipeline_task_order_and_deps(settings):
             f"{source}.land_to_bronze",
             f"{source}.bronze_to_silver",
         }
-    expected.add("silver_to_gold")
+    expected.update({"silver_to_gold", "deliver", "ml_consume"})
     assert set(dag.task_dict) == expected
 
     for source in ("auth", "proc", "flows", "dns"):
@@ -68,12 +73,15 @@ def test_daily_pipeline_task_order_and_deps(settings):
             f"{source}.bronze_to_silver"
         }
 
-    # Every source's Silver feeds the single cross-source computer_features Gold job.
+    # Every source's Silver feeds the single cross-source computer_features Gold job,
+    # which then flows Gold -> deliver -> ml_consume.
     for source in ("auth", "proc", "flows", "dns"):
         assert dag.task_dict[f"{source}.bronze_to_silver"].downstream_task_ids == {
             "silver_to_gold"
         }
-    assert dag.task_dict["silver_to_gold"].downstream_task_ids == set()
+    assert dag.task_dict["silver_to_gold"].downstream_task_ids == {"deliver"}
+    assert dag.task_dict["deliver"].downstream_task_ids == {"ml_consume"}
+    assert dag.task_dict["ml_consume"].downstream_task_ids == set()
 
 
 def test_daily_pipeline_operator_wiring(settings):
@@ -113,3 +121,13 @@ def test_daily_pipeline_operator_wiring(settings):
     assert features.image == "clap-spark-processor:test"
     assert features.command == ["silver_to_gold", "--day", "{{ params.day }}"]
     assert features.environment == settings.task_environment
+
+    deliver = dag.task_dict["deliver"]
+    assert deliver.image == "clap-delivery:test"
+    assert deliver.command == ["--day", "{{ params.day }}"]
+    assert deliver.environment == settings.task_environment
+
+    ml_consume = dag.task_dict["ml_consume"]
+    assert ml_consume.image == "clap-ml-mock:test"
+    assert ml_consume.command == ["--day", "{{ params.day }}"]
+    assert ml_consume.environment == settings.task_environment

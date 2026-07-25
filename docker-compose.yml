@@ -20,6 +20,8 @@ x-airflow-common: &airflow-common
     # Wiring the DAG uses to launch task containers.
     IMG_SIMULATOR: ${IMG_SIMULATOR}
     IMG_SPARK: ${IMG_SPARK}
+    IMG_DELIVERY: ${IMG_DELIVERY}
+    IMG_ML_MOCK: ${IMG_ML_MOCK}
     NETWORK_NAME: ${NETWORK_NAME}
     HOST_PROJECT_DIR: ${HOST_PROJECT_DIR}
     MINIO_ENDPOINT: ${MINIO_ENDPOINT}
@@ -29,7 +31,10 @@ x-airflow-common: &airflow-common
     BRONZE_BUCKET: ${BRONZE_BUCKET}
     SILVER_BUCKET: ${SILVER_BUCKET}
     GOLD_BUCKET: ${GOLD_BUCKET}
+    DELIVERED_BUCKET: ${DELIVERED_BUCKET}
     ROLLING_WINDOW_DAYS: ${ROLLING_WINDOW_DAYS:-7}
+    SCHEMA_VERSION: ${SCHEMA_VERSION:-v1}
+    DELIVERY_ENCRYPTION_KEY: ${DELIVERY_ENCRYPTION_KEY}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - airflow-logs:/opt/airflow/logs
@@ -70,6 +75,7 @@ services:
       mc mb --ignore-existing local/${BRONZE_BUCKET} &&
       mc mb --ignore-existing local/${SILVER_BUCKET} &&
       mc mb --ignore-existing local/${GOLD_BUCKET} &&
+      mc mb --ignore-existing local/${DELIVERED_BUCKET} &&
       echo 'buckets ready';
       "
     networks:
@@ -151,6 +157,37 @@ services:
     build: ./services/spark-processor
     image: ${IMG_SPARK}
     profiles: ["build"]
+
+  delivery:
+    build: ./services/delivery
+    image: ${IMG_DELIVERY}
+    profiles: ["build"]
+
+  # Always-on consumer dashboard (the only new long-running service). Its build
+  # also produces the ml-mock image the `ml_consume` DAG task launches. Reads the
+  # delivered bucket only; overrides the image's default consume entrypoint.
+  ml-dashboard:
+    build: ./services/ml-mock
+    image: ${IMG_ML_MOCK}
+    entrypoint:
+      - streamlit
+      - run
+      - /app/dashboard.py
+      - --server.port=8501
+      - --server.address=0.0.0.0
+    environment:
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      DELIVERED_BUCKET: ${DELIVERED_BUCKET}
+      DELIVERY_ENCRYPTION_KEY: ${DELIVERY_ENCRYPTION_KEY}
+    ports:
+      - "${ML_DASHBOARD_PORT:-8501}:8501"
+    depends_on:
+      - minio
+    networks:
+      - platform-net
+    restart: unless-stopped
 
 volumes:
   minio-data:
