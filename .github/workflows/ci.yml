@@ -44,7 +44,7 @@ jobs:
       - name: Unit tests (pytest)
         env:
           AIRFLOW_HOME: ${{ runner.temp }}/airflow-home
-        run: pytest -m "not e2e"
+        run: pytest -m "not e2e and not e2e_full"
 
   e2e:
     name: End-to-end (compose)

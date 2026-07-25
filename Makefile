@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt test test-unit test-e2e build up down pipeline backfill e2e clean
+.PHONY: help install lint fmt test test-unit test-e2e build up down pipeline backfill e2e e2e-full clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -18,7 +18,7 @@ fmt: ## Auto-format with ruff
 test: test-unit
 
 test-unit: ## Run fast unit tests (no docker required)
-	pytest -m "not e2e"
+	pytest -m "not e2e and not e2e_full"
 
 test-e2e: ## Verify Gold output in MinIO (run `make pipeline` first)
 	pytest tests/e2e -m e2e
@@ -40,6 +40,10 @@ backfill: ## Backfill days START..END (default 0..6) to seed the rolling window
 
 e2e: pipeline ## Run the full pipeline then verify Gold output
 	pytest tests/e2e -m e2e
+
+e2e-full: ## Backfill a full 7-day window (days 0..6) then verify multi-day Gold
+	bash scripts/e2e_full_window.sh 0 6
+	pytest tests/e2e -m e2e_full
 
 clean: ## Remove local caches and generated data layers
 	rm -rf .pytest_cache .ruff_cache **/__pycache__ \

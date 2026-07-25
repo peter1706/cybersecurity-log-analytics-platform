@@ -27,5 +27,6 @@ pythonpath = [
 testpaths = ["tests"]
 markers = [
     "e2e: end-to-end tests that require docker compose (deselect with '-m \"not e2e\"')",
+    "e2e_full: heavyweight full 7-day rolling-window e2e; run via 'make e2e-full' (excluded from the unit and fast e2e suites)",
 ]
 addopts = "-ra"
