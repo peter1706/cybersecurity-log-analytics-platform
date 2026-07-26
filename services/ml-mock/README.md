@@ -3,10 +3,12 @@
 Mock consumer of the `delivered` store, with two run modes from one image:
 
 - **`ml_consume` DAG task** (default entrypoint, `consume.py`): after `deliver`,
-  fetches the manifest + encrypted Parquet for an anchor day, decrypts it, verifies
-  the SHA-256 against the manifest, validates the schema exactly against the
-  consumer's feature contract and **rejects** any deviation, checks the record
-  count, then logs a simulated retrain.
+  fetches the manifest + encrypted Parquet for an anchor day and decrypts the
+  Parquet Modular Encryption (AES-GCM) — the authenticated decryption is the
+  integrity check, so a tampered/corrupted artifact or wrong key fails the task —
+  then validates the schema exactly against the consumer's feature contract and
+  **rejects** any deviation, checks the record count, then logs a simulated
+  retrain.
 - **Dashboard** (`dashboard.py`, always-on Streamlit on host port 8501, configurable
   via `ML_DASHBOARD_PORT`): lists deliveries, shows manifest metadata, and decrypts
   a selected partition for preview. Reads **only** the `delivered` bucket.
@@ -33,7 +35,7 @@ local runs).
 |-----|-----|---------|
 | `MINIO_ENDPOINT` | env | MinIO endpoint URL |
 | `minio_ml_consumer_key`, `minio_ml_consumer_secret` | secret | `delivered`-scoped MinIO service account |
-| `delivery_encryption_key` | secret | Fernet key for decrypting delivered Parquet |
+| `delivery_encryption_key` | secret | master key for decrypting Parquet Modular Encryption |
 | `DELIVERED_BUCKET` | env | delivered bucket (default `delivered`) |
 | `ROLLING_WINDOW_DAYS` | env | default `--window-days` |
 | `ML_DASHBOARD_PORT` | env | host port for the dashboard (default `8501`) |

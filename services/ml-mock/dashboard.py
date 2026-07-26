@@ -9,20 +9,17 @@ you decrypt and preview one partition. It never touches landing/bronze/silver/go
 
 from __future__ import annotations
 
-import hashlib
-import io
 import json
 import os
 
 import boto3
 import feature_contract
 import pandas as pd
-import pyarrow.parquet as pq
 import streamlit as st
 from botocore.client import Config
-from cryptography.fernet import Fernet
 
 from catalog import read_secret
+from catalog.parquet_encryption import read_encrypted_parquet
 
 DATASET = "computer_features"
 
@@ -54,10 +51,8 @@ def _list_manifests(client, bucket: str) -> list[dict]:
 
 def _load_preview(client, bucket: str, manifest: dict, key: str) -> pd.DataFrame:
     ciphertext = client.get_object(Bucket=bucket, Key=manifest["data_object"])["Body"].read()
-    plaintext = Fernet(key).decrypt(ciphertext)
-    if hashlib.sha256(plaintext).hexdigest() != manifest["checksum_sha256"]:
-        raise ValueError("checksum mismatch for delivered partition")
-    return pq.read_table(io.BytesIO(plaintext)).to_pandas()
+    # Authenticated (AES-GCM) decryption fails on any tampering/corruption.
+    return read_encrypted_parquet(ciphertext, key).to_pandas()
 
 
 def main() -> None:
