@@ -25,14 +25,22 @@ rand() { python3 -c "import secrets;print(secrets.token_hex(${1:-24}))"; }
 fernet() { python3 -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"; }
 
 # write_secret <name> <value>: write only when the file is absent (idempotent).
+# Mode 0644 (not 0600): compose bind-mounts each secret into the container with
+# the host file's owner/mode, and the Airflow services run as a non-root user
+# (AIRFLOW_UID:0) that is neither the file's owner nor able to read a 0600 file on
+# Linux -- so it needs the world-read bit. These files are generated, gitignored,
+# never committed, and ephemeral, so world-readable on the host is acceptable.
+# Existing files are re-chmod'd so a local stack created with the old 0600 mode
+# self-heals on the next run.
 write_secret() {
   local name="$1" value="$2" path="$SECRETS_DIR/$1"
   if [ -f "$path" ]; then
+    chmod 644 "$path"
     echo "  keep    $name"
     return
   fi
   printf '%s' "$value" > "$path"
-  chmod 600 "$path"
+  chmod 644 "$path"
   echo "  create  $name"
 }
 
