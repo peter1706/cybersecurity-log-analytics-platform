@@ -54,6 +54,9 @@ write_secret airflow_db_password       "${AIRFLOW_DB_PASSWORD:-$(rand)}"
 write_secret airflow_fernet_key        "${AIRFLOW_FERNET_KEY:-$(fernet)}"
 write_secret airflow_jwt_secret        "${AIRFLOW_JWT_SECRET:-$(rand)}"
 write_secret airflow_admin_password    "${AIRFLOW_ADMIN_PASSWORD:-admin}"
-write_secret delivery_encryption_key   "${DELIVERY_ENCRYPTION_KEY:-$(fernet)}"
+# Opaque master-key material for Parquet Modular Encryption on delivered output;
+# catalog.parquet_encryption derives a 256-bit AES key from it via SHA-256, so any
+# high-entropy string works (an existing Fernet-format value stays valid too).
+write_secret delivery_encryption_key   "${DELIVERY_ENCRYPTION_KEY:-$(rand 32)}"
 
 echo "==> Done. ./$SECRETS_DIR is gitignored -- never commit it."

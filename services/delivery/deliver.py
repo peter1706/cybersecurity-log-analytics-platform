@@ -4,8 +4,9 @@
 Reads the Gold Delta partition for ``(window_days, anchor_day)`` directly with the
 ``deltalake`` (delta-rs) reader -- lightweight and partition-correct (it resolves
 the active files from ``_delta_log`` so an overwrite is not double-counted). The
-rows are written as columnar Parquet, Fernet-encrypted at rest, and uploaded to
-the ``delivered`` bucket together with a delivery manifest.
+rows are written as columnar Parquet with Parquet Modular Encryption (AES-GCM,
+footer + all columns) at rest, and uploaded to the ``delivered`` bucket together
+with a delivery manifest.
 
 Object keys are fixed per partition, so re-delivering an anchor day overwrites the
 same objects without duplicating anything.
@@ -28,6 +29,7 @@ from botocore.client import Config
 from deltalake import DeltaTable
 
 from catalog import CatalogClient, read_secret
+from catalog.parquet_encryption import write_encrypted_parquet
 
 
 def _minio_credentials() -> tuple[str, str]:
@@ -98,11 +100,14 @@ def deliver(anchor_day: int, window_days: int) -> dict:
             "run silver_to_gold for this day first"
         )
 
+    # Plaintext Parquet is written once to compute the Gold -> delivered audit
+    # checksum; the delivered artifact is a *separately* written, PME-encrypted
+    # Parquet (AES-GCM authenticates it on the consumer's read).
     buf = io.BytesIO()
     pq.write_table(table, buf)
     plaintext = buf.getvalue()
 
-    ciphertext = bundle.encrypt(plaintext, key)
+    ciphertext = write_encrypted_parquet(table, key)
     manifest = bundle.build_manifest(
         schema_version=schema_version,
         window_days=window_days,

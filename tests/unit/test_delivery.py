@@ -1,46 +1,27 @@
-"""Unit tests for the pure delivery helpers (no MinIO/Delta required)."""
+"""Unit tests for the pure delivery helpers (no MinIO/Delta/pyarrow required)."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 
+import bundle
 import pytest
 
-pytest.importorskip("cryptography")
-
-import bundle  # noqa: E402
-from cryptography.fernet import Fernet  # noqa: E402
+# A sample opaque master-key string; bundle only hashes it for the manifest key id.
+SAMPLE_KEY = "sample-delivery-encryption-key-value=="
 
 
 class TestChecksum:
     def test_sha256_matches_hashlib(self):
-        import hashlib
-
         data = b"some parquet bytes"
         assert bundle.sha256_hex(data) == hashlib.sha256(data).hexdigest()
 
     def test_key_id_is_stable_and_not_the_key(self):
-        key = Fernet.generate_key()
-        kid = bundle.key_id(key)
-        assert kid == bundle.key_id(key)  # stable
+        kid = bundle.key_id(SAMPLE_KEY)
+        assert kid == bundle.key_id(SAMPLE_KEY)  # stable
         assert len(kid) == 12
-        assert key.decode() not in kid  # never leaks the key material
-
-
-class TestFernetRoundtrip:
-    def test_encrypt_then_decrypt_returns_plaintext(self):
-        key = Fernet.generate_key()
-        plaintext = b"\x00\x01columnar-parquet\xff"
-        token = bundle.encrypt(plaintext, key)
-        assert token != plaintext
-        assert bundle.decrypt(token, key) == plaintext
-
-    def test_wrong_key_cannot_decrypt(self):
-        from cryptography.fernet import InvalidToken
-
-        token = bundle.encrypt(b"secret", Fernet.generate_key())
-        with pytest.raises(InvalidToken):
-            bundle.decrypt(token, Fernet.generate_key())
+        assert SAMPLE_KEY not in kid  # never leaks the key material
 
 
 class TestObjectKeys:
@@ -53,7 +34,6 @@ class TestObjectKeys:
 
 class TestManifest:
     def test_contains_required_fields_and_checksum(self):
-        key = Fernet.generate_key()
         plaintext = b"rows"
         manifest = bundle.build_manifest(
             schema_version="v1",
@@ -61,7 +41,7 @@ class TestManifest:
             anchor_day=6,
             record_count=42,
             plaintext=plaintext,
-            key=key,
+            key=SAMPLE_KEY,
         )
         # dataset/schema version, record count, timestamp, checksum.
         assert manifest["dataset"] == "computer_features"
@@ -69,8 +49,13 @@ class TestManifest:
         assert manifest["window_days"] == 7
         assert manifest["anchor_day"] == 6
         assert manifest["record_count"] == 42
+        # checksum is over the *pre-encryption* plaintext Parquet bytes.
         assert manifest["checksum_sha256"] == bundle.sha256_hex(plaintext)
-        assert manifest["encryption"] == {"scheme": "fernet", "key_id": bundle.key_id(key)}
+        assert manifest["encryption"] == {
+            "scheme": bundle.ENCRYPTION_SCHEME,
+            "key_id": bundle.key_id(SAMPLE_KEY),
+        }
+        assert manifest["encryption"]["scheme"] == "parquet-modular-aes-gcm-v1"
         assert manifest["data_object"] == bundle.data_key(6, 7)
         assert "created_at" in manifest
         # columns default to the binding schema.
@@ -83,21 +68,20 @@ class TestManifest:
             anchor_day=0,
             record_count=1,
             plaintext=b"x",
-            key=Fernet.generate_key(),
+            key=SAMPLE_KEY,
         )
         assert json.loads(bundle.manifest_bytes(manifest)) == manifest
 
 
 class TestManifestRecord:
     def test_maps_manifest_to_governance_record(self):
-        key = Fernet.generate_key()
         manifest = bundle.build_manifest(
             schema_version="v1",
             window_days=7,
             anchor_day=6,
             record_count=42,
             plaintext=b"rows",
-            key=key,
+            key=SAMPLE_KEY,
         )
         record = bundle.manifest_record(manifest)
         assert record.dataset == "computer_features"
@@ -107,8 +91,8 @@ class TestManifestRecord:
         assert record.anchor_day == 6
         assert record.record_count == 42
         assert record.checksum_sha256 == bundle.sha256_hex(b"rows")
-        assert record.encryption_scheme == "fernet"
-        assert record.encryption_key_id == bundle.key_id(key)
+        assert record.encryption_scheme == bundle.ENCRYPTION_SCHEME
+        assert record.encryption_key_id == bundle.key_id(SAMPLE_KEY)
         assert record.data_object == bundle.data_key(6, 7)
 
 

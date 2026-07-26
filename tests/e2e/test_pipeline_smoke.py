@@ -96,6 +96,7 @@ def _delivered_prefix() -> str:
 
 def test_delivery_produces_encrypted_object_and_manifest():
     """The deliver task must write an encrypted Parquet + a contract-conformant manifest."""
+    import bundle
     import feature_contract
 
     s3 = client()
@@ -108,7 +109,7 @@ def test_delivery_produces_encrypted_object_and_manifest():
     assert manifest["window_days"] == WINDOW_DAYS
     assert manifest["anchor_day"] == ANCHOR_DAY
     assert manifest["columns"] == feature_contract.EXPECTED_COLUMNS
-    assert manifest["encryption"]["scheme"] == "fernet"
+    assert manifest["encryption"]["scheme"] == bundle.ENCRYPTION_SCHEME
 
     head = s3.head_object(Bucket=DELIVERED_BUCKET, Key=manifest["data_object"])
     assert head["ContentLength"] > 0, "encrypted delivered object is empty"
