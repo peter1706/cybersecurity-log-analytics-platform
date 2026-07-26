@@ -5,8 +5,9 @@ Runs as the ``ml_consume`` DAG task after ``deliver``. For anchor day ``--day`` 
 window ``--window-days`` it:
 
 1. fetches the manifest + encrypted Parquet from the ``delivered`` bucket;
-2. decrypts with the provided Fernet key and checks the plaintext SHA-256 against
-   the manifest;
+2. decrypts the Parquet Modular Encryption (AES-GCM) with the delivery key -- the
+   authenticated decryption is the integrity check: a tampered or corrupted
+   artifact, or a wrong key, fails to decrypt and fails the task;
 3. validates the schema against the consumer's feature contract exactly, rejecting
    any deviation;
 4. checks the record count matches the manifest, then logs a simulated retrain.
@@ -18,8 +19,6 @@ This is the consumer's least-privilege boundary in miniature: it reads only the
 from __future__ import annotations
 
 import argparse
-import hashlib
-import io
 import json
 import os
 import sys
@@ -27,11 +26,10 @@ import traceback
 
 import boto3
 import feature_contract
-import pyarrow.parquet as pq
 from botocore.client import Config
-from cryptography.fernet import Fernet
 
 from catalog import read_secret
+from catalog.parquet_encryption import read_encrypted_parquet
 
 DATASET = "computer_features"
 
@@ -67,15 +65,9 @@ def consume(anchor_day: int, window_days: int) -> dict:
     )
     ciphertext = client.get_object(Bucket=bucket, Key=manifest["data_object"])["Body"].read()
 
-    plaintext = Fernet(key).decrypt(ciphertext)
-    checksum = hashlib.sha256(plaintext).hexdigest()
-    if checksum != manifest["checksum_sha256"]:
-        raise ValueError(
-            "delivered checksum mismatch (data corrupted or tampered): "
-            f"manifest={manifest['checksum_sha256'][:12]}... actual={checksum[:12]}..."
-        )
-
-    table = pq.read_table(io.BytesIO(plaintext))
+    # Authenticated (AES-GCM) decryption *is* the integrity check: a tampered or
+    # corrupted artifact, or a wrong key, raises here and fails the task.
+    table = read_encrypted_parquet(ciphertext, key)
     feature_contract.validate_schema(table.column_names)
 
     if table.num_rows != manifest["record_count"]:
@@ -88,7 +80,7 @@ def consume(anchor_day: int, window_days: int) -> dict:
     print(
         f"ml-mock: accepted delivery anchor_day={anchor_day} window_days={window_days} "
         f"schema={manifest['schema_version']} rows={table.num_rows} "
-        f"checksum={checksum[:12]}... -> simulating retrain on "
+        f"scheme={manifest.get('encryption', {}).get('scheme')} -> simulating retrain on "
         f"{table.num_rows:,} computers x {n_features} features",
         flush=True,
     )

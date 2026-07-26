@@ -1,12 +1,14 @@
-"""Pure delivery bundle helpers: canonical schema, checksums, Fernet, manifest.
+"""Pure delivery bundle helpers: canonical schema, checksums, manifest.
 
 Kept free of heavy dependencies (no ``deltalake``/``pyarrow``/``boto3``) so the
-manifest/encryption logic is fast to unit-test. The Delta read and object I/O
-live in ``deliver.py``.
+schema/checksum/manifest logic is fast to unit-test. The Delta read, the actual
+Parquet Modular Encryption (``catalog.parquet_encryption``), and object I/O live
+in ``deliver.py``.
 
-Encryption is a Fernet whole-file wrapper providing delivered-at-rest protection:
-the plaintext is columnar Parquet and Fernet encrypts the whole file at
-rest.
+Delivered-at-rest protection is Parquet Modular Encryption (AES-GCM): the footer
+and every column of the delivered Parquet are encrypted in place. This module only
+owns the manifest metadata that *describes* that scheme (:data:`ENCRYPTION_SCHEME`,
+the key id); the encryption itself is done in :mod:`catalog.parquet_encryption`.
 """
 
 from __future__ import annotations
@@ -15,9 +17,12 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
-from cryptography.fernet import Fernet
-
 from catalog import DeliveryManifest
+
+# Manifest label for the delivered-artifact encryption scheme. AES-GCM Parquet
+# Modular Encryption; recorded in the manifest and the governance catalog so the
+# consumer/catalog know which scheme protected the artifact.
+ENCRYPTION_SCHEME = "parquet-modular-aes-gcm-v1"
 
 # Delivered schema, in contract order. This is the producer side of the
 # data-science interface contract; the consumer (ml-mock) keeps its own copy and a
@@ -85,16 +90,6 @@ def key_id(key: bytes | str) -> str:
     return hashlib.sha256(raw).hexdigest()[:12]
 
 
-def encrypt(data: bytes, key: bytes | str) -> bytes:
-    """Fernet-encrypt ``data``."""
-    return Fernet(key).encrypt(data)
-
-
-def decrypt(token: bytes, key: bytes | str) -> bytes:
-    """Reverse :func:`encrypt`."""
-    return Fernet(key).decrypt(token)
-
-
 def delivered_prefix(anchor_day: int, window_days: int) -> str:
     """Object-key prefix for one delivered partition (fixed -> idempotent)."""
     return f"{DATASET}/window_days={window_days}/anchor_day={anchor_day:02d}"
@@ -124,9 +119,11 @@ def build_manifest(
     """Build the delivery manifest.
 
     Contains at least dataset/schema version, record count, timestamp, and the
-    SHA-256 checksum of the *plaintext* Parquet (what the consumer verifies after
-    decryption), plus the columns for schema conformance and the
-    encryption key id.
+    SHA-256 checksum of the pre-encryption (plaintext) Parquet -- the Gold ->
+    delivered link in the audit chain, recorded to the governance catalog -- plus
+    the columns for schema conformance and the encryption scheme + key id. The
+    consumer's runtime integrity guarantee is the authenticated (AES-GCM)
+    decryption itself, so it does not re-derive this checksum from the ciphertext.
     """
     return {
         "dataset": DATASET,
@@ -138,7 +135,7 @@ def build_manifest(
         "columns": list(columns if columns is not None else DELIVERED_COLUMNS),
         "created_at": created_at or datetime.now(UTC).isoformat(),
         "checksum_sha256": sha256_hex(plaintext),
-        "encryption": {"scheme": "fernet", "key_id": key_id(key)},
+        "encryption": {"scheme": ENCRYPTION_SCHEME, "key_id": key_id(key)},
         "data_object": data_key(anchor_day, window_days),
     }
 

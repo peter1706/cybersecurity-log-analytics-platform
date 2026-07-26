@@ -186,7 +186,7 @@ class TestSqlBuilders:
                 anchor_day=6,
                 record_count=42,
                 checksum_sha256="deadbeef",
-                encryption_scheme="fernet",
+                encryption_scheme="parquet-modular-aes-gcm-v1",
                 encryption_key_id="abc123",
                 data_object="k",
             )
