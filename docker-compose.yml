@@ -1,4 +1,7 @@
-# First thin vertical slice: MinIO + Airflow 3.3 (LocalExecutor) + Spark/Delta.
+# Local platform: MinIO + Airflow 3.3 (LocalExecutor) + Spark/Delta + governance
+# catalog, split across three isolated Docker networks (see the `networks:` block
+# at the bottom) and with all credentials delivered as container secrets mounted
+# at /run/secrets/<name> (see the `secrets:` block).
 
 x-airflow-common: &airflow-common
   build:
@@ -7,28 +10,32 @@ x-airflow-common: &airflow-common
   image: clap-airflow:dev
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-postgres:5432/${AIRFLOW_DB}
-    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    # Credentials come from mounted secrets, not the environment: Airflow reads the
+    # *_CMD variants at runtime (the DB URL embeds the password read from its file).
+    # Airflow runs a *_CMD without a shell (it splits the string and execs it) and
+    # does not strip the output, so the DB URL must be produced by an explicit
+    # `bash -c` (for the `$(cat ...)` substitution) using `printf` (no trailing
+    # newline). A bare `echo "...$(cat ...)..."` would be sent verbatim.
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: 'bash -c "printf postgresql+psycopg2://${AIRFLOW_DB_USER}:%s@airflow-postgres:5432/${AIRFLOW_DB} $$(cat /run/secrets/airflow_db_password)"'
+    AIRFLOW__CORE__FERNET_KEY_CMD: "cat /run/secrets/airflow_fernet_key"
+    AIRFLOW__API_AUTH__JWT_SECRET_CMD: "cat /run/secrets/airflow_jwt_secret"
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     # Airflow 3: workers talk to the API server (not the metadata DB directly).
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
-    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
-    # Simple Auth Manager
+    # Simple Auth Manager (admin password read from its secret at init time).
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: "${AIRFLOW_ADMIN_USER}:admin"
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/auth/simple_auth_manager_passwords.json.generated
     AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER}
-    AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
     # Wiring the DAG uses to launch task containers.
     IMG_SIMULATOR: ${IMG_SIMULATOR}
     IMG_SPARK: ${IMG_SPARK}
     IMG_DELIVERY: ${IMG_DELIVERY}
     IMG_ML_MOCK: ${IMG_ML_MOCK}
-    NETWORK_NAME: ${NETWORK_NAME}
+    PIPELINE_NETWORK_NAME: ${PIPELINE_NETWORK_NAME}
+    ML_NETWORK_NAME: ${ML_NETWORK_NAME}
     HOST_PROJECT_DIR: ${HOST_PROJECT_DIR}
     MINIO_ENDPOINT: ${MINIO_ENDPOINT}
-    MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     LANDING_BUCKET: ${LANDING_BUCKET}
     BRONZE_BUCKET: ${BRONZE_BUCKET}
     SILVER_BUCKET: ${SILVER_BUCKET}
@@ -39,17 +46,24 @@ x-airflow-common: &airflow-common
     # Spark tuning, forwarded by the DAG into every spark-processor task.
     SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-3g}
     SPARK_SQL_SHUFFLE_PARTITIONS: ${SPARK_SQL_SHUFFLE_PARTITIONS:-8}
-    DELIVERY_ENCRYPTION_KEY: ${DELIVERY_ENCRYPTION_KEY}
-    # Governance catalog (postgres-catalog) — forwarded to task containers that
-    # record lineage/checksums/manifests, and used by Airflow job-run callbacks.
+    # Governance catalog (postgres-catalog): non-sensitive connection settings.
+    # The password is read from /run/secrets/postgres_catalog_password by the
+    # DAG's job-run callbacks (read_secret) -- not forwarded as an env var.
     CATALOG_DB_HOST: ${CATALOG_DB_HOST}
     CATALOG_DB_PORT: ${CATALOG_DB_PORT}
     CATALOG_DB_NAME: ${CATALOG_DB_NAME}
     CATALOG_DB_USER: ${CATALOG_DB_USER}
-    CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD}
     # Make the image-baked `catalog/` governance client importable by the DAG's
     # job-run callbacks (it lives outside the bind-mounted dags/ dir).
     PYTHONPATH: /opt/airflow/governance
+  # Airflow needs its own metadata DB + API server (airflow-net) and, for the
+  # job-run callbacks, the governance catalog + Docker socket (pipeline-net).
+  secrets:
+    - airflow_db_password
+    - airflow_fernet_key
+    - airflow_jwt_secret
+    - airflow_admin_password
+    - postgres_catalog_password
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - airflow-logs:/opt/airflow/logs
@@ -59,53 +73,83 @@ x-airflow-common: &airflow-common
   group_add:
     - "${DOCKER_GID}"
   networks:
-    - platform-net
+    - airflow-net
+    - pipeline-net
 
 services:
   minio:
     image: minio/minio:RELEASE.2024-09-22T00-33-43Z
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # MinIO reads the root credentials from the mounted secret files.
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+    secrets:
+      - minio_root_user
+      - minio_root_password
     ports:
-      - "9000:9000"   # S3 API
+      - "9000:9000"   # S3 API (kept exposed for local debugging)
       - "9001:9001"   # console (debugging only)
     volumes:
       - minio-data:/data
+    # On pipeline-net for the producers/Spark/delivery + on ml-net so the
+    # consumer can reach only the delivered bucket (via a scoped service account).
     networks:
-      - platform-net
+      - pipeline-net
+      - ml-net
 
-  # One-shot: wait for MinIO, create the layer buckets, then exit.
+  # One-shot: wait for MinIO, create the layer buckets, and provision the
+  # `delivered`-scoped MinIO service account the consumer uses, then exit.
   mc-init:
     image: minio/mc:RELEASE.2024-09-16T17-43-14Z
     depends_on:
       - minio
+    environment:
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      LANDING_BUCKET: ${LANDING_BUCKET}
+      BRONZE_BUCKET: ${BRONZE_BUCKET}
+      SILVER_BUCKET: ${SILVER_BUCKET}
+      GOLD_BUCKET: ${GOLD_BUCKET}
+      DELIVERED_BUCKET: ${DELIVERED_BUCKET}
+    secrets:
+      - minio_root_user
+      - minio_root_password
+      - minio_ml_consumer_key
+      - minio_ml_consumer_secret
     entrypoint: >
-      /bin/sh -c "
-      until mc alias set local ${MINIO_ENDPOINT} ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}; do
-        echo 'waiting for minio...'; sleep 2;
+      /bin/sh -c '
+      RU=$$(cat /run/secrets/minio_root_user);
+      RP=$$(cat /run/secrets/minio_root_password);
+      CK=$$(cat /run/secrets/minio_ml_consumer_key);
+      CS=$$(cat /run/secrets/minio_ml_consumer_secret);
+      until mc alias set local $$MINIO_ENDPOINT "$$RU" "$$RP"; do
+        echo "waiting for minio..."; sleep 2;
       done &&
-      mc mb --ignore-existing local/${LANDING_BUCKET} &&
-      mc mb --ignore-existing local/${BRONZE_BUCKET} &&
-      mc mb --ignore-existing local/${SILVER_BUCKET} &&
-      mc mb --ignore-existing local/${GOLD_BUCKET} &&
-      mc mb --ignore-existing local/${DELIVERED_BUCKET} &&
-      echo 'buckets ready';
-      "
+      mc mb --ignore-existing local/$$LANDING_BUCKET &&
+      mc mb --ignore-existing local/$$BRONZE_BUCKET &&
+      mc mb --ignore-existing local/$$SILVER_BUCKET &&
+      mc mb --ignore-existing local/$$GOLD_BUCKET &&
+      mc mb --ignore-existing local/$$DELIVERED_BUCKET &&
+      printf "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:GetBucketLocation\",\"s3:ListBucket\"],\"Resource\":[\"arn:aws:s3:::%s\",\"arn:aws:s3:::%s/*\"]}]}" "$$DELIVERED_BUCKET" "$$DELIVERED_BUCKET" > /tmp/ml-consumer.json &&
+      mc admin user svcacct add --access-key "$$CK" --secret-key "$$CS" --policy /tmp/ml-consumer.json local "$$RU" || echo "ml-consumer service account already exists" &&
+      echo "buckets + delivered-scoped ml-consumer account ready";
+      '
     networks:
-      - platform-net
+      - pipeline-net
 
   # Governance catalog: lineage, schema registry, job-run logs, checksums, and
   # delivery manifests. A separate instance from airflow-postgres so orchestration
-  # state never mixes with governance data. Kept on platform-net for now; it moves
-  # onto an isolated catalog network later.
+  # state never mixes with governance data. On pipeline-net: the producers/Spark/
+  # delivery task containers and the Airflow callbacks record here, but the ML
+  # consumer (ml-net) never can.
   postgres-catalog:
     image: postgres:15
     environment:
       POSTGRES_USER: ${CATALOG_DB_USER}
-      POSTGRES_PASSWORD: ${CATALOG_DB_PASSWORD}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_catalog_password
       POSTGRES_DB: ${CATALOG_DB_NAME}
+    secrets:
+      - postgres_catalog_password
     volumes:
       - postgres-catalog-data:/var/lib/postgresql/data
     healthcheck:
@@ -114,7 +158,7 @@ services:
       timeout: 5s
       retries: 20
     networks:
-      - platform-net
+      - pipeline-net
 
   # One-shot: wait for the catalog, apply every migration in filename order, exit.
   # Migrations are idempotent (CREATE ... IF NOT EXISTS), so re-running is safe.
@@ -124,27 +168,33 @@ services:
       postgres-catalog:
         condition: service_healthy
     environment:
-      PGPASSWORD: ${CATALOG_DB_PASSWORD}
+      CATALOG_DB_USER: ${CATALOG_DB_USER}
+      CATALOG_DB_NAME: ${CATALOG_DB_NAME}
+    secrets:
+      - postgres_catalog_password
     volumes:
       - ./catalog/migrations:/migrations:ro
     entrypoint: >
       /bin/bash -c "
       set -e;
+      export PGPASSWORD=$$(cat /run/secrets/postgres_catalog_password);
       for f in $$(ls /migrations/*.sql | sort); do
         echo \"applying $$f\";
-        psql -v ON_ERROR_STOP=1 -h postgres-catalog -U ${CATALOG_DB_USER} -d ${CATALOG_DB_NAME} -f \"$$f\";
+        psql -v ON_ERROR_STOP=1 -h postgres-catalog -U $$CATALOG_DB_USER -d $$CATALOG_DB_NAME -f \"$$f\";
       done;
       echo 'catalog migrations applied';
       "
     networks:
-      - platform-net
+      - pipeline-net
 
   airflow-postgres:
     image: postgres:15
     environment:
       POSTGRES_USER: ${AIRFLOW_DB_USER}
-      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_PASSWORD_FILE: /run/secrets/airflow_db_password
       POSTGRES_DB: ${AIRFLOW_DB}
+    secrets:
+      - airflow_db_password
     volumes:
       - airflow-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -153,7 +203,7 @@ services:
       timeout: 5s
       retries: 20
     networks:
-      - platform-net
+      - airflow-net
 
   airflow-init:
     <<: *airflow-common
@@ -164,10 +214,14 @@ services:
       /bin/bash -c "
       mkdir -p /opt/airflow/auth &&
       airflow db migrate &&
-      python -c \"import json,os; p='/opt/airflow/auth/simple_auth_manager_passwords.json.generated'; open(p,'w').write(json.dumps({os.environ['AIRFLOW_ADMIN_USER']: os.environ['AIRFLOW_ADMIN_PASSWORD']}))\" &&
+      python -c \"import json,os; p='/opt/airflow/auth/simple_auth_manager_passwords.json.generated'; pw=open('/run/secrets/airflow_admin_password').read().strip(); open(p,'w').write(json.dumps({os.environ['AIRFLOW_ADMIN_USER']: pw}))\" &&
       echo 'simple auth password file ready'
       "
-    restart: on-failure
+    # One-shot init: must NOT restart. A restart policy other than "no" can make
+    # `compose up` never register this container's `service_completed_successfully`
+    # transition on some Compose versions, so dependents wait forever; it also
+    # turns a genuine init failure into an infinite wait instead of a fast error.
+    restart: "no"
 
   airflow-api-server:
     <<: *airflow-common
@@ -229,10 +283,13 @@ services:
     profiles: ["build"]
 
   # Always-on consumer dashboard (the only new long-running service). Its build
-  # also produces the ml-mock image the `ml_consume` DAG task launches. Reads the
-  # delivered bucket only; overrides the image's default consume entrypoint.
+  # also produces the ml-mock image the `ml_consume` DAG task launches. On ml-net
+  # only, using the `delivered`-scoped MinIO service account -- it can reach the
+  # delivered bucket and nothing else (no catalog, no other layers).
   ml-dashboard:
-    build: ./services/ml-mock
+    build:
+      context: .
+      dockerfile: services/ml-mock/Dockerfile
     image: ${IMG_ML_MOCK}
     entrypoint:
       - streamlit
@@ -242,16 +299,17 @@ services:
       - --server.address=0.0.0.0
     environment:
       MINIO_ENDPOINT: ${MINIO_ENDPOINT}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       DELIVERED_BUCKET: ${DELIVERED_BUCKET}
-      DELIVERY_ENCRYPTION_KEY: ${DELIVERY_ENCRYPTION_KEY}
+    secrets:
+      - minio_ml_consumer_key
+      - minio_ml_consumer_secret
+      - delivery_encryption_key
     ports:
       - "${ML_DASHBOARD_PORT:-8501}:8501"
     depends_on:
       - minio
     networks:
-      - platform-net
+      - ml-net
     restart: unless-stopped
 
 volumes:
@@ -261,6 +319,43 @@ volumes:
   airflow-logs:
   airflow-simple-auth:
 
+# All credentials are file-based Docker secrets, mounted at /run/secrets/<name>.
+# Populate ./secrets with scripts/init_secrets.sh (gitignored; never committed).
+secrets:
+  minio_root_user:
+    file: ./secrets/minio_root_user
+  minio_root_password:
+    file: ./secrets/minio_root_password
+  minio_ml_consumer_key:
+    file: ./secrets/minio_ml_consumer_key
+  minio_ml_consumer_secret:
+    file: ./secrets/minio_ml_consumer_secret
+  postgres_catalog_password:
+    file: ./secrets/postgres_catalog_password
+  airflow_db_password:
+    file: ./secrets/airflow_db_password
+  airflow_fernet_key:
+    file: ./secrets/airflow_fernet_key
+  airflow_jwt_secret:
+    file: ./secrets/airflow_jwt_secret
+  airflow_admin_password:
+    file: ./secrets/airflow_admin_password
+  delivery_encryption_key:
+    file: ./secrets/delivery_encryption_key
+
+# Three isolated networks (least privilege by construction):
+#   pipeline-net  data plane: MinIO, postgres-catalog, and the producer/Spark/
+#                 delivery task containers + Airflow (for callbacks + socket).
+#   airflow-net   orchestration control plane: airflow-postgres + Airflow services.
+#   ml-net        consumer plane: MinIO (delivered bucket only) + ml-mock.
+# The catalog shares pipeline-net (rather than its own network) because a
+# DockerOperator task container attaches to a single network yet needs both the
+# object store and the governance catalog; the ML consumer stays fully isolated
+# from the catalog on ml-net.
 networks:
-  platform-net:
-    name: ${NETWORK_NAME}
+  pipeline-net:
+    name: ${PIPELINE_NETWORK_NAME:-clap-pipeline-net}
+  airflow-net:
+    name: ${AIRFLOW_NETWORK_NAME:-clap-airflow-net}
+  ml-net:
+    name: ${ML_NETWORK_NAME:-clap-ml-net}

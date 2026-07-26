@@ -22,15 +22,20 @@ import streamlit as st
 from botocore.client import Config
 from cryptography.fernet import Fernet
 
+from catalog import read_secret
+
 DATASET = "computer_features"
 
 
 def _s3_client():
+    # Same `delivered`-scoped MinIO service account as the ml_consume task.
     return boto3.client(
         "s3",
         endpoint_url=os.environ["MINIO_ENDPOINT"],
-        aws_access_key_id=os.environ["MINIO_ROOT_USER"],
-        aws_secret_access_key=os.environ["MINIO_ROOT_PASSWORD"],
+        aws_access_key_id=read_secret("minio_ml_consumer_key", env="MINIO_ML_CONSUMER_KEY"),
+        aws_secret_access_key=read_secret(
+            "minio_ml_consumer_secret", env="MINIO_ML_CONSUMER_SECRET"
+        ),
         config=Config(signature_version="s3v4"),
         region_name=os.environ.get("AWS_REGION", "us-east-1"),
     )
@@ -64,7 +69,7 @@ def main() -> None:
     )
 
     bucket = os.environ.get("DELIVERED_BUCKET", "delivered")
-    key = os.environ.get("DELIVERY_ENCRYPTION_KEY", "")
+    key = read_secret("delivery_encryption_key", env="DELIVERY_ENCRYPTION_KEY", default="")
     client = _s3_client()
 
     try:

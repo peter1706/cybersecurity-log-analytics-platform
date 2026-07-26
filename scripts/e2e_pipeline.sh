@@ -13,12 +13,32 @@ LOGICAL_DATE="2026-01-01"
 # host path. Override whatever is in .env for this run.
 export HOST_PROJECT_DIR="$(pwd)"
 
+echo "==> Initializing container secrets (./secrets)"
+# Compose mounts every credential from ./secrets/<name>; create any missing ones.
+bash scripts/init_secrets.sh
+
 echo "==> Building images (airflow, simulator, spark-processor, delivery, ml-mock)"
 docker compose --profile build build
 
 echo "==> Starting core services"
-docker compose up -d minio mc-init airflow-postgres airflow-init \
-  airflow-api-server airflow-scheduler airflow-dag-processor postgres-catalog
+# --wait blocks until long-running services are healthy and airflow-init has
+# exited 0 (it is a service_completed_successfully dependency, so --wait tolerates
+# its exit); --wait-timeout fails fast instead of hanging until an outer CI
+# timeout. mc-init is deliberately excluded: it is a one-shot that nothing
+# depends on via a compose condition, so --wait would treat its clean 0-exit as a
+# failure. Dump state + init logs on failure so the cause is visible.
+if ! docker compose up -d --wait --wait-timeout 300 \
+  minio airflow-postgres postgres-catalog airflow-init \
+  airflow-api-server airflow-scheduler airflow-dag-processor; then
+  echo "==> Core services failed to become ready; dumping diagnostics." >&2
+  docker compose ps -a >&2 || true
+  docker compose logs --no-color --tail 200 \
+    airflow-init airflow-postgres airflow-api-server >&2 || true
+  exit 1
+fi
+# One-shot bucket + delivered-scoped-account provisioner; runs to completion in
+# the background before the first stage touches MinIO.
+docker compose up -d mc-init
 
 echo "==> Applying governance-catalog migrations"
 # One-shot: waits for postgres-catalog to be healthy, applies every migration in

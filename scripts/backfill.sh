@@ -24,24 +24,40 @@ fi
 # shellcheck disable=SC1091
 set -a; . ./.env; set +a
 
-NETWORK="${NETWORK_NAME:-platform-net}"
+PIPELINE_NET="${PIPELINE_NETWORK_NAME:-clap-pipeline-net}"
+ML_NET="${ML_NETWORK_NAME:-clap-ml-net}"
 SIM_IMG="${IMG_SIMULATOR:-clap-lanl-simulator:dev}"
 SPARK_IMG="${IMG_SPARK:-clap-spark-processor:dev}"
 DELIVERY_IMG="${IMG_DELIVERY:-clap-delivery:dev}"
 ML_MOCK_IMG="${IMG_ML_MOCK:-clap-ml-mock:dev}"
 SUBSET_DIR="$(pwd)/data/subset"
+SECRETS_DIR="$(pwd)/secrets"
 SOURCES=(auth proc flows dns)
 
-if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
-  echo "ERROR: docker network '$NETWORK' not found. Start the stack (make up)." >&2
+if [ ! -d "$SECRETS_DIR" ]; then
+  echo "ERROR: ./secrets not found. Run scripts/init_secrets.sh first." >&2
+  exit 1
+fi
+if ! docker network inspect "$PIPELINE_NET" >/dev/null 2>&1; then
+  echo "ERROR: docker network '$PIPELINE_NET' not found. Start the stack (make up)." >&2
   exit 1
 fi
 
-run_sim() { docker run --rm --network "$NETWORK" --env-file .env \
-  -v "$SUBSET_DIR:/data/subset:ro" "$SIM_IMG" "$@"; }
-run_spark() { docker run --rm --network "$NETWORK" --env-file .env "$SPARK_IMG" "$@"; }
-run_delivery() { docker run --rm --network "$NETWORK" --env-file .env "$DELIVERY_IMG" "$@"; }
-run_consume() { docker run --rm --network "$NETWORK" --env-file .env "$ML_MOCK_IMG" "$@"; }
+# Credentials are delivered as read-only /run/secrets mounts, never env vars.
+# The producer/Spark/delivery tasks run on the data-plane network and get the
+# whole secrets dir; the ML consumer runs on the isolated consumer network with
+# only its `delivered`-scoped MinIO account + decryption key mounted.
+run_sim() { docker run --rm --network "$PIPELINE_NET" --env-file .env \
+  -v "$SECRETS_DIR:/run/secrets:ro" -v "$SUBSET_DIR:/data/subset:ro" "$SIM_IMG" "$@"; }
+run_spark() { docker run --rm --network "$PIPELINE_NET" --env-file .env \
+  -v "$SECRETS_DIR:/run/secrets:ro" "$SPARK_IMG" "$@"; }
+run_delivery() { docker run --rm --network "$PIPELINE_NET" --env-file .env \
+  -v "$SECRETS_DIR:/run/secrets:ro" "$DELIVERY_IMG" "$@"; }
+run_consume() { docker run --rm --network "$ML_NET" --env-file .env \
+  -v "$SECRETS_DIR/minio_ml_consumer_key:/run/secrets/minio_ml_consumer_key:ro" \
+  -v "$SECRETS_DIR/minio_ml_consumer_secret:/run/secrets/minio_ml_consumer_secret:ro" \
+  -v "$SECRETS_DIR/delivery_encryption_key:/run/secrets/delivery_encryption_key:ro" \
+  "$ML_MOCK_IMG" "$@"; }
 
 echo "==> Seeding landing for days ${START_DAY}..${END_DAY} (all sources, one pass each)"
 for source in "${SOURCES[@]}"; do
