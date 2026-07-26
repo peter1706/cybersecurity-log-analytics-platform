@@ -4,6 +4,8 @@ Imported by daily_pipeline.py for Airflow discovery and by unit tests with
 injected PipelineSettings.
 """
 
+import json
+import logging
 from datetime import timedelta
 
 import pendulum
@@ -16,6 +18,10 @@ from catalog import CatalogClient, JobRun
 
 SOURCES = ("auth", "proc", "flows", "dns")
 DAY_TEMPLATE = "{{ params.day }}"
+
+# Structured failure alerts are emitted to the logs (no SMTP/e-mail), keeping the
+# stack fully offline-capable.
+_LOG = logging.getLogger("clap.pipeline")
 
 # Credentials the ML consumer is allowed to hold. It runs on the isolated
 # consumer network with a `delivered`-scoped MinIO service account, so only these
@@ -100,18 +106,50 @@ def _record_job_run(context: dict, status: str) -> None:
         print(f"job_run governance write failed ({status}): {exc}", flush=True)
 
 
+def build_failure_alert(context: dict) -> dict:
+    """Structured failure-alert payload for the logs (pure).
+
+    Reuses :func:`build_job_run` so the alert and the ``job_runs`` telemetry can't
+    diverge. Emitted as a single JSON log line by :func:`_on_failure_callback`
+    once retries are exhausted -- a log alert rather than SMTP e-mail keeps the
+    system offline-capable.
+    """
+    run = build_job_run(context, "failed")
+    return {
+        "alert": "task_failure",
+        "dag_id": run.dag_id,
+        "task_id": run.task_id,
+        "run_id": run.run_id,
+        "job": run.job,
+        "source": run.source,
+        "day": run.day,
+        "try_number": run.try_number,
+        "error": run.error,
+        "duration_ms": run.duration_ms,
+    }
+
+
 def _on_success_callback(context: dict) -> None:
     _record_job_run(context, "success")
 
 
 def _on_failure_callback(context: dict) -> None:
+    _LOG.error(
+        "pipeline task failure alert: %s",
+        json.dumps(build_failure_alert(context), sort_keys=True),
+    )
     _record_job_run(context, "failed")
 
 
+# >=3 retries with exponential backoff (capped) satisfies the reliability
+# requirement; the failure callback emits the structured log alert once retries
+# are exhausted. Backoff grows 30s -> 60s -> 120s ... up to max_retry_delay.
 DEFAULT_ARGS = {
     "owner": "data-eng",
-    "retries": 2,
+    "retries": 3,
     "retry_delay": timedelta(seconds=30),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=5),
     "on_success_callback": _on_success_callback,
     "on_failure_callback": _on_failure_callback,
 }

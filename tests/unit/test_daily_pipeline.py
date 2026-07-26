@@ -8,9 +8,11 @@ pytest.importorskip("airflow")
 pytest.importorskip("airflow.providers.docker")
 
 import datetime as dt  # noqa: E402
+import json  # noqa: E402
+from datetime import timedelta  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
-from pipeline_dag import build_daily_pipeline, build_job_run  # noqa: E402
+from pipeline_dag import build_daily_pipeline, build_failure_alert, build_job_run  # noqa: E402
 from pipeline_settings import PipelineSettings  # noqa: E402
 
 
@@ -149,6 +151,17 @@ def test_daily_pipeline_operator_wiring(settings):
     assert all(m["ReadOnly"] for m in ml_consume.mounts)
 
 
+def test_default_args_retries_and_backoff(settings):
+    """Reliability requirement: every task retries >=3 times with capped backoff."""
+    dag = build_daily_pipeline(settings)
+    # default_args apply to all tasks; spot-check a representative one.
+    task = dag.task_dict["silver_to_gold"]
+    assert task.retries >= 3
+    assert task.retry_exponential_backoff is True
+    assert task.retry_delay == timedelta(seconds=30)
+    assert task.max_retry_delay == timedelta(minutes=5)
+
+
 def _callback_context(**overrides) -> dict:
     """A minimal Airflow-callback context for build_job_run."""
     ti = SimpleNamespace(
@@ -196,3 +209,19 @@ class TestBuildJobRun:
         record = build_job_run(_callback_context(exception=RuntimeError("boom")), "failed")
         assert record.status == "failed"
         assert record.error is not None and "boom" in record.error
+
+
+class TestBuildFailureAlert:
+    def test_structured_alert_from_failed_context(self):
+        alert = build_failure_alert(_callback_context(exception=RuntimeError("boom")))
+        assert alert["alert"] == "task_failure"
+        assert alert["dag_id"] == "daily_pipeline"
+        assert alert["task_id"] == "auth.land_to_bronze"
+        assert alert["source"] == "auth"
+        assert alert["job"] == "land_to_bronze"
+        assert alert["day"] == 6
+        assert alert["try_number"] == 2
+        assert alert["error"] is not None and "boom" in alert["error"]
+        assert alert["duration_ms"] == 5000
+        # Emitted as a single JSON log line, so it must be JSON-serializable.
+        assert json.loads(json.dumps(alert, sort_keys=True))["alert"] == "task_failure"
