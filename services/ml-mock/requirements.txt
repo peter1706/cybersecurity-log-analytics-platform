@@ -1,5 +1,5 @@
 boto3==1.35.36
 pyarrow==17.0.0
-cryptography==43.0.1
+cryptography==48.0.1
 pandas==2.2.3
 streamlit==1.39.0

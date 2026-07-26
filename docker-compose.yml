@@ -46,6 +46,12 @@ x-airflow-common: &airflow-common
     # Spark tuning, forwarded by the DAG into every spark-processor task.
     SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-3g}
     SPARK_SQL_SHUFFLE_PARTITIONS: ${SPARK_SQL_SHUFFLE_PARTITIONS:-8}
+    # Executor sizing (memory/cores/count). Inert under local[*] but scales the
+    # same image out on a real cluster via env only. Default to Spark's own
+    # defaults (1g / 1 core / dynamic) when unset in .env.
+    SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
+    SPARK_EXECUTOR_CORES: ${SPARK_EXECUTOR_CORES:-1}
+    SPARK_EXECUTOR_INSTANCES: ${SPARK_EXECUTOR_INSTANCES:-1}
     # Governance catalog (postgres-catalog): non-sensitive connection settings.
     # The password is read from /run/secrets/postgres_catalog_password by the
     # DAG's job-run callbacks (read_secret) -- not forwarded as an env var.
