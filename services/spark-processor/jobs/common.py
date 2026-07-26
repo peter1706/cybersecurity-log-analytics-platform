@@ -25,6 +25,15 @@ def build_spark(app_name: str) -> SparkSession:
     # PARTITIONS) and only override when set, so tests/other callers keep theirs.
     shuffle_partitions = os.environ.get("SPARK_SQL_SHUFFLE_PARTITIONS")
 
+    # Executor sizing knobs (memory/cores/count). Inert under the default
+    # ``local[*]`` master (driver and executor are the same JVM), but they let the
+    # same image scale out on a real cluster by only changing env vars -- the
+    # config-only horizontal-scale headroom the design calls for. Applied only when
+    # set, so unit tests and local runs keep Spark's defaults.
+    executor_memory = os.environ.get("SPARK_EXECUTOR_MEMORY")
+    executor_cores = os.environ.get("SPARK_EXECUTOR_CORES")
+    executor_instances = os.environ.get("SPARK_EXECUTOR_INSTANCES")
+
     builder = (
         SparkSession.builder.appName(app_name)
         .master(os.environ.get("SPARK_MASTER", "local[*]"))
@@ -47,6 +56,12 @@ def build_spark(app_name: str) -> SparkSession:
     )
     if shuffle_partitions:
         builder = builder.config("spark.sql.shuffle.partitions", shuffle_partitions)
+    if executor_memory:
+        builder = builder.config("spark.executor.memory", executor_memory)
+    if executor_cores:
+        builder = builder.config("spark.executor.cores", executor_cores)
+    if executor_instances:
+        builder = builder.config("spark.executor.instances", executor_instances)
 
     builder = configure_spark_with_delta_pip(builder, extra_packages=[HADOOP_AWS])
     # In local mode the driver JVM heap is fixed at launch, so spark.driver.memory
