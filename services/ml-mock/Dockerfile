@@ -2,6 +2,7 @@
 # `catalog/` package can be layered in for read_secret() credential loading.
 FROM python:3.11-slim
 
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin app
 WORKDIR /app
 
 COPY services/ml-mock/requirements.txt .
@@ -12,6 +13,9 @@ COPY services/ml-mock/feature_contract.py services/ml-mock/consume.py services/m
 # from mounted secrets -- it never talks to the governance catalog DB, so the
 # Postgres driver is intentionally not installed here.
 COPY catalog ./catalog
+RUN chown -R app:app /app
+
+USER app
 
 EXPOSE 8501
 
