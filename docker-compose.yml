@@ -98,6 +98,11 @@ services:
       - "9001:9001"   # console (debugging only)
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     # On pipeline-net for the producers/Spark/delivery + on ml-net so the
     # consumer can reach only the delivered bucket (via a scoped service account).
     networks:
@@ -109,7 +114,8 @@ services:
   mc-init:
     image: minio/mc:RELEASE.2024-09-16T17-43-14Z
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     environment:
       MINIO_ENDPOINT: ${MINIO_ENDPOINT}
       LANDING_BUCKET: ${LANDING_BUCKET}
@@ -253,6 +259,12 @@ services:
         condition: service_completed_successfully
       airflow-api-server:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "airflow", "jobs", "check", "--job-type", "SchedulerJob", "--local"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
   airflow-dag-processor:
@@ -263,6 +275,12 @@ services:
         condition: service_completed_successfully
       airflow-api-server:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "airflow", "jobs", "check", "--job-type", "DagProcessorJob", "--local"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
   # --- Task images (built, not run as services). Launched by the DAG. ---
@@ -312,8 +330,16 @@ services:
       - delivery_encryption_key
     ports:
       - "${ML_DASHBOARD_PORT:-8501}:8501"
+    healthcheck:
+      # No curl in the ml-mock image; urllib is stdlib and already present.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=3)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     networks:
       - ml-net
     restart: unless-stopped
