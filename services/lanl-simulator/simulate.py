@@ -24,6 +24,9 @@ import hashlib
 import io
 import os
 import sys
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from pathlib import Path
 
 import boto3
 from botocore.client import Config
@@ -72,12 +75,12 @@ class LandingSimulator:
         access_key: str,
         secret_key: str,
         bucket: str,
-        subset_dir: str,
+        subset_dir: str | Path,
         schema_version: str = "v1",
-        catalog_factory=None,
+        catalog_factory: Callable[[], AbstractContextManager[CatalogClient]] | None = None,
     ):
         self.bucket = bucket
-        self.subset_dir = subset_dir
+        self.subset_dir = Path(subset_dir)
         self.schema_version = schema_version
         # Factory returning a governance-catalog client context manager. Default
         # opens a real connection; tests inject a fake.
@@ -92,7 +95,7 @@ class LandingSimulator:
         )
 
     @classmethod
-    def from_env(cls, subset_dir: str) -> "LandingSimulator":
+    def from_env(cls, subset_dir: str | Path) -> "LandingSimulator":
         """Build a simulator from the MinIO endpoint/config and MinIO secrets.
 
         The endpoint, bucket, and schema version are non-sensitive env vars; the
@@ -117,9 +120,9 @@ class LandingSimulator:
         """Return the landing object key for a source/day."""
         return f"{source}/day={day:02d}/{source}-{day:03d}.csv.gz"
 
-    def source_path(self, source: str) -> str:
+    def source_path(self, source: str) -> Path:
         """Return the local subset path for a source."""
-        return os.path.join(self.subset_dir, f"{source}.txt.gz")
+        return self.subset_dir / f"{source}.txt.gz"
 
     def filter_days(
         self, source: str, start: int, end: int
@@ -133,7 +136,7 @@ class LandingSimulator:
         reading as soon as the stream passes ``end``.
         """
         src_path = self.source_path(source)
-        if not os.path.exists(src_path):
+        if not src_path.exists():
             raise FileNotFoundError(f"source subset not found: {src_path}")
 
         lines_by_day: dict[int, list[str]] = {}
@@ -234,7 +237,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--subset-dir",
-        default=os.environ.get("SUBSET_DIR", "/data/subset"),
+        type=Path,
+        default=Path(os.environ.get("SUBSET_DIR", "/data/subset")),
         help="directory holding <source>.txt.gz subset files",
     )
     args = parser.parse_args()

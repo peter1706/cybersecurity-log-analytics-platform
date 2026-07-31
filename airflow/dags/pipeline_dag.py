@@ -7,15 +7,15 @@ injected PipelineSettings.
 import json
 import logging
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pendulum
-from docker.types import Mount
-from pipeline_settings import PipelineSettings, load_pipeline_settings
-
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.sdk import DAG, TaskGroup
+from docker.types import Mount
+
 from catalog import CatalogClient, JobRun
+from pipeline_settings import PipelineSettings, load_pipeline_settings
 
 SOURCES = ("auth", "proc", "flows", "dns")
 DAY_TEMPLATE = "{{ params.day }}"
@@ -80,7 +80,7 @@ def _all_secrets_mount(host_project_dir: str) -> Mount:
     )
 
 
-def _iso(value) -> str | None:
+def _iso(value: datetime | None) -> str | None:
     """Return an ISO-8601 string for a datetime, or ``None``."""
     return value.isoformat() if value is not None else None
 
