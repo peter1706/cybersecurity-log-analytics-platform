@@ -10,21 +10,24 @@ you decrypt and preview one partition. It never touches landing/bronze/silver/go
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 import boto3
-import feature_contract
 import pandas as pd
 import streamlit as st
-from botocore.client import Config
+from botocore.client import BaseClient, Config
 
+import feature_contract
 from catalog import read_secret
 from catalog.parquet_encryption import read_encrypted_parquet
 
 DATASET = "computer_features"
 
+logger = logging.getLogger(__name__)
 
-def _s3_client():
+
+def _s3_client() -> BaseClient:
     # Same `delivered`-scoped MinIO service account as the ml_consume task.
     return boto3.client(
         "s3",
@@ -70,6 +73,7 @@ def main() -> None:
     try:
         manifests = _list_manifests(client, bucket)
     except Exception as exc:  # noqa: BLE001 - dashboard should show, not crash
+        logger.exception("Could not list deliveries in '%s'", bucket)
         st.error(f"Could not list deliveries in '{bucket}': {exc}")
         return
 
@@ -109,7 +113,8 @@ def main() -> None:
         return
     try:
         df = _load_preview(client, bucket, manifest, key)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - dashboard should show, not crash
+        logger.exception("Could not decrypt/preview partition")
         st.error(f"Could not decrypt/preview: {exc}")
         return
     st.dataframe(df.head(50), use_container_width=True, hide_index=True)

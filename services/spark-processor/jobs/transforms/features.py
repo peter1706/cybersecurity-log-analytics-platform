@@ -87,6 +87,24 @@ def assemble_computer_features(
     undefined ratios stay NULL. The row is stamped with ``anchor_day`` and
     ``window_days`` (part of the primary key) and the four ``source_present_*``
     availability flags.
+
+    Args:
+        auth: Output of :func:`auth_computer_features`, keyed by ``computer_id``.
+        proc: Output of :func:`proc_computer_features`, keyed by ``computer_id``.
+        flows: Output of :func:`flows_computer_features`, keyed by ``computer_id``.
+        dns: Output of :func:`dns_computer_features`, keyed by ``computer_id``.
+        anchor_day: Day index the rolling window ends on (inclusive); stamped
+            onto every row as part of the partition key.
+        window_days: Length of the rolling window in days; stamped onto every
+            row as part of the partition key.
+        source_present: Whether each of ``auth``/``proc``/``flows``/``dns`` had
+            any in-window data at all for this ``(anchor_day, window_days)``,
+            independent of whether a given computer appears in it -- recorded
+            per row as the ``source_present_*`` flags.
+
+    Returns:
+        One row per computer, with columns in :data:`COMPUTER_FEATURE_COLUMNS`
+        order.
     """
     joined = (
         auth.join(proc, on="computer_id", how="fullouter")

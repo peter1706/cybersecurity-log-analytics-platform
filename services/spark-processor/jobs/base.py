@@ -152,22 +152,20 @@ class MedallionJob(ABC):
                     # Record checksum + lineage + schema as part of the same task,
                     # after a successful write. A catalog failure fails the task.
                     lineage, schema = self.governance_records(count, result.columns)
-                    catalog.record_checksum(
-                        self.checksum_record(dataframe_checksum(result), count)
-                    )
+                    catalog.record_checksum(self.checksum_record(dataframe_checksum(result), count))
                     catalog.record_lineage(lineage)
                     catalog.register_schema(schema)
+                    print(
+                        f"{self.name}: wrote {count:,} rows -> {self.target_path()} "
+                        f"(source={self.source.name}, day={self.day})",
+                        flush=True,
+                    )
+                    return count
                 finally:
                     result.unpersist()
             finally:
                 if self.cache_input:
                     input_df.unpersist()
-        print(
-            f"{self.name}: wrote {count:,} rows -> {self.target_path()} "
-            f"(source={self.source.name}, day={self.day})",
-            flush=True,
-        )
-        return count
 
 
 class LandToBronzeJob(MedallionJob):
@@ -376,16 +374,13 @@ class ComputerFeaturesJob:
             # Cache each source's windowed Silver: it is scanned by checksum
             # validation (per day), the presence check, and the feature builder.
             # Without caching each source would be re-read from Silver 3+ times.
-            frames = {
-                src: self._windowed_silver(src, start_day).persist() for src in self.sources
-            }
+            frames = {src: self._windowed_silver(src, start_day).persist() for src in self.sources}
             features = None
             try:
                 # Validate every upstream Silver partition before reading it.
                 self._validate_silver(catalog, frames)
                 source_present = {
-                    src: self._source_present(frames[src], expected_days)
-                    for src in self.sources
+                    src: self._source_present(frames[src], expected_days) for src in self.sources
                 }
 
                 # Cached: consumed by the empty-guard count, the write, and the
@@ -417,14 +412,14 @@ class ComputerFeaturesJob:
                 )
                 catalog.record_lineage(lineage)
                 catalog.register_schema(schema)
+                print(
+                    f"{self.name}: wrote {count:,} rows -> {target} "
+                    f"(anchor_day={self.day}, window={window}d, present={source_present})",
+                    flush=True,
+                )
+                return count
             finally:
                 if features is not None:
                     features.unpersist()
                 for frame in frames.values():
                     frame.unpersist()
-        print(
-            f"{self.name}: wrote {count:,} rows -> {target} "
-            f"(anchor_day={self.day}, window={window}d, present={source_present})",
-            flush=True,
-        )
-        return count

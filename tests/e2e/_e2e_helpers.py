@@ -137,7 +137,7 @@ def delta_column_sum_by_partition(s3, bucket: str, table: str, column: str, part
     return sums
 
 
-def read_delta_table(s3, bucket: str, table: str) -> "pa.Table":
+def read_delta_table(s3, bucket: str, table: str) -> pa.Table:
     """Read a whole Delta table's active files into one pyarrow Table."""
     active = sorted(active_delta_files(s3, bucket, table))
     assert active, f"no active data files in Delta table {bucket}/{table}/"
@@ -148,7 +148,7 @@ def read_delta_table(s3, bucket: str, table: str) -> "pa.Table":
     return pa.concat_tables(tables)
 
 
-def read_delta_partition(s3, bucket: str, table: str, partition: str, value: int) -> "pa.Table":
+def read_delta_partition(s3, bucket: str, table: str, partition: str, value: int) -> pa.Table:
     """Read only the active files of one Hive partition (matched by integer value).
 
     Matches ``partition=<n>`` in the file path irrespective of zero-padding, so it

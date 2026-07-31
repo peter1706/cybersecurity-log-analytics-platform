@@ -36,6 +36,7 @@ def settings() -> PipelineSettings:
             "GOLD_BUCKET": "gold",
             "DELIVERED_BUCKET": "delivered",
             "SCHEMA_VERSION": "v1",
+            "SPARK_DRIVER_MEMORY": "3g",
         },
     )
 
@@ -86,13 +87,11 @@ def test_daily_pipeline_task_order_and_deps(settings):
     assert dag.task_dict["ml_consume"].downstream_task_ids == set()
 
 
-def test_daily_pipeline_operator_wiring(settings):
-    """Assert DockerOperator fields are taken from the injected settings.
+def test_simulate_task_wiring(settings):
+    """Assert auth.simulate's image, command, network, env, and mounts.
 
-    For auth.simulate: image, auth/day command, platform network, MinIO env
-    forwarding, and the read-only bind of host data/subset into /data/subset.
-    For auth.land_to_bronze: spark image, job command, and the full
-    task_environment dict passed through to the container.
+    Covers the platform network, MinIO env forwarding (without leaking
+    credentials), and the read-only bind of host data/subset into /data/subset.
     """
     dag = build_daily_pipeline(settings)
 
@@ -109,6 +108,11 @@ def test_daily_pipeline_operator_wiring(settings):
     assert mount_sources["/repo/secrets"]["ReadOnly"] is True
     assert mount_sources["/repo/data/subset"]["Target"] == "/data/subset"
 
+
+def test_spark_source_task_wiring(settings):
+    """Assert the per-source Spark task command/env wiring (land_to_bronze, bronze_to_silver)."""
+    dag = build_daily_pipeline(settings)
+
     spark = dag.task_dict["auth.land_to_bronze"]
     assert spark.image == "clap-spark-processor:test"
     assert spark.command == ["land_to_bronze", "--source", "auth", "--day", "{{ params.day }}"]
@@ -123,23 +127,39 @@ def test_daily_pipeline_operator_wiring(settings):
         "{{ params.day }}",
     ]
 
-    # The single cross-source Gold job takes no --source.
+
+def test_silver_to_gold_task_wiring(settings):
+    """Assert the single cross-source Gold job's command takes no --source."""
+    dag = build_daily_pipeline(settings)
+
     features = dag.task_dict["silver_to_gold"]
     assert features.image == "clap-spark-processor:test"
     assert features.command == ["silver_to_gold", "--day", "{{ params.day }}"]
     assert features.environment == settings.task_environment
+
+
+def test_deliver_task_wiring(settings):
+    """Assert the deliver task's image, command, and environment."""
+    dag = build_daily_pipeline(settings)
 
     deliver = dag.task_dict["deliver"]
     assert deliver.image == "clap-delivery:test"
     assert deliver.command == ["--day", "{{ params.day }}"]
     assert deliver.environment == settings.task_environment
 
+
+def test_ml_consume_task_wiring(settings):
+    """Assert ml_consume's command/env and its network/secret isolation.
+
+    The consumer is isolated to the ML network and only ever mounts its scoped
+    secrets -- never the whole secrets dir (which would expose the root keys).
+    """
+    dag = build_daily_pipeline(settings)
+
     ml_consume = dag.task_dict["ml_consume"]
     assert ml_consume.image == "clap-ml-mock:test"
     assert ml_consume.command == ["--day", "{{ params.day }}"]
     assert ml_consume.environment == settings.task_environment
-    # The consumer is isolated to the ML network and only ever mounts its scoped
-    # secrets -- never the whole secrets dir (which would expose the root keys).
     assert ml_consume.network_mode == "clap-ml-net"
     ml_targets = {m["Target"] for m in ml_consume.mounts}
     assert ml_targets == {

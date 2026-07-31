@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+
 from pipeline_settings import load_pipeline_settings, missing_env_keys, require_env
 
 FIXTURE_YAML = """\

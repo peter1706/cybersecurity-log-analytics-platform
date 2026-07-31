@@ -6,18 +6,46 @@ injected PipelineSettings.
 
 import json
 import logging
-from datetime import timedelta
+import re
+from datetime import datetime, timedelta
 
 import pendulum
-from docker.types import Mount
-from pipeline_settings import PipelineSettings, load_pipeline_settings
-
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.sdk import DAG, TaskGroup
+from docker.types import Mount
+
 from catalog import CatalogClient, JobRun
+from pipeline_settings import PipelineSettings, load_pipeline_settings
 
 SOURCES = ("auth", "proc", "flows", "dns")
 DAY_TEMPLATE = "{{ params.day }}"
+
+# Memory limits for DockerOperator tasks are based on profiling;
+# no CPU cap is set (DockerOperator sets cpu_shares, not a hard limit).
+_LIGHTWEIGHT_TASK_MEM_LIMIT = "1g"
+
+# Extra memory over JVM heap to avoid Docker OOM before -Xmx backpressure.
+_SPARK_CONTAINER_MEM_OVERHEAD_MIB = 1536
+
+_SPARK_MEM_PATTERN = re.compile(r"(\d+)\s*([kmgt])b?$", re.IGNORECASE)
+_SPARK_MEM_UNIT_TO_MIB = {"k": 1 / 1024, "m": 1, "g": 1024, "t": 1024 * 1024}
+
+
+def _spark_task_mem_limit(spark_driver_memory: str) -> str:
+    """Docker ``mem_limit`` for a Spark task container, derived from its own
+    ``SPARK_DRIVER_MEMORY`` (e.g. ``"3g"``) plus fixed overhead.
+
+    Keeping this derived (rather than a second hardcoded constant) means raising
+    ``SPARK_DRIVER_MEMORY`` in ``.env`` can't silently leave the container limit
+    below the configured JVM heap.
+    """
+    match = _SPARK_MEM_PATTERN.match(spark_driver_memory.strip())
+    if not match:
+        raise ValueError(f"Unrecognized SPARK_DRIVER_MEMORY value: {spark_driver_memory!r}")
+    value, unit = int(match.group(1)), match.group(2).lower()
+    driver_mib = int(value * _SPARK_MEM_UNIT_TO_MIB[unit])
+    return f"{driver_mib + _SPARK_CONTAINER_MEM_OVERHEAD_MIB}m"
+
 
 # Structured failure alerts are emitted to the logs (no SMTP/e-mail), keeping the
 # stack fully offline-capable.
@@ -53,7 +81,7 @@ def _all_secrets_mount(host_project_dir: str) -> Mount:
     )
 
 
-def _iso(value) -> str | None:
+def _iso(value: datetime | None) -> str | None:
     """Return an ISO-8601 string for a datetime, or ``None``."""
     return value.isoformat() if value is not None else None
 
@@ -183,6 +211,7 @@ class _PlatformDockerOperator(DockerOperator):
             "tty": False,
             "environment": settings.task_environment,
             "mounts": [*secret_mounts, *extra_mounts],
+            "mem_limit": _LIGHTWEIGHT_TASK_MEM_LIMIT,
         }
         super().__init__(**{**defaults, **kwargs})
 
@@ -227,6 +256,9 @@ class SparkJobOperator(_PlatformDockerOperator):
         day: str = DAY_TEMPLATE,
         **kwargs,
     ):
+        kwargs.setdefault(
+            "mem_limit", _spark_task_mem_limit(settings.task_environment["SPARK_DRIVER_MEMORY"])
+        )
         super().__init__(
             settings=settings,
             task_id=job,
@@ -244,6 +276,9 @@ class ComputerFeaturesOperator(_PlatformDockerOperator):
     """
 
     def __init__(self, *, settings: PipelineSettings, day: str = DAY_TEMPLATE, **kwargs):
+        kwargs.setdefault(
+            "mem_limit", _spark_task_mem_limit(settings.task_environment["SPARK_DRIVER_MEMORY"])
+        )
         super().__init__(
             settings=settings,
             task_id="silver_to_gold",

@@ -3,6 +3,13 @@
 # at the bottom) and with all credentials delivered as container secrets mounted
 # at /run/secrets/<name> (see the `secrets:` block).
 
+# Bounds json-file log growth for every long-running/one-shot service below.
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-airflow-common: &airflow-common
   build:
     context: .
@@ -78,9 +85,16 @@ x-airflow-common: &airflow-common
   user: "${AIRFLOW_UID}:0"
   group_add:
     - "${DOCKER_GID}"
+  logging: *default-logging
   networks:
     - airflow-net
     - pipeline-net
+  # Sized above the observed peaks of a full 7-day backfill
+  deploy:
+    resources:
+      limits:
+        cpus: '1.5'
+        memory: 1G
 
 services:
   minio:
@@ -98,6 +112,18 @@ services:
       - "9001:9001"   # console (debugging only)
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    logging: *default-logging
+    restart: unless-stopped
     # On pipeline-net for the producers/Spark/delivery + on ml-net so the
     # consumer can reach only the delivered bucket (via a scoped service account).
     networks:
@@ -109,7 +135,8 @@ services:
   mc-init:
     image: minio/mc:RELEASE.2024-09-16T17-43-14Z
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     environment:
       MINIO_ENDPOINT: ${MINIO_ENDPOINT}
       LANDING_BUCKET: ${LANDING_BUCKET}
@@ -140,6 +167,7 @@ services:
       mc admin user svcacct add --access-key "$$CK" --secret-key "$$CS" --policy /tmp/ml-consumer.json local "$$RU" || echo "ml-consumer service account already exists" &&
       echo "buckets + delivered-scoped ml-consumer account ready";
       '
+    logging: *default-logging
     networks:
       - pipeline-net
 
@@ -149,7 +177,7 @@ services:
   # delivery task containers and the Airflow callbacks record here, but the ML
   # consumer (ml-net) never can.
   postgres-catalog:
-    image: postgres:15
+    image: postgres:15.15
     environment:
       POSTGRES_USER: ${CATALOG_DB_USER}
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_catalog_password
@@ -163,6 +191,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    logging: *default-logging
+    restart: unless-stopped
     networks:
       - pipeline-net
 
@@ -190,11 +225,12 @@ services:
       done;
       echo 'catalog migrations applied';
       "
+    logging: *default-logging
     networks:
       - pipeline-net
 
   airflow-postgres:
-    image: postgres:15
+    image: postgres:15.15
     environment:
       POSTGRES_USER: ${AIRFLOW_DB_USER}
       POSTGRES_PASSWORD_FILE: /run/secrets/airflow_db_password
@@ -208,6 +244,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    logging: *default-logging
+    restart: unless-stopped
     networks:
       - airflow-net
 
@@ -253,6 +296,12 @@ services:
         condition: service_completed_successfully
       airflow-api-server:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "airflow", "jobs", "check", "--job-type", "SchedulerJob", "--local"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
   airflow-dag-processor:
@@ -263,6 +312,12 @@ services:
         condition: service_completed_successfully
       airflow-api-server:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "airflow", "jobs", "check", "--job-type", "DagProcessorJob", "--local"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
   # --- Task images (built, not run as services). Launched by the DAG. ---
@@ -312,8 +367,22 @@ services:
       - delivery_encryption_key
     ports:
       - "${ML_DASHBOARD_PORT:-8501}:8501"
+    healthcheck:
+      # No curl in the ml-mock image; urllib is stdlib and already present.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=3)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+    logging: *default-logging
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     networks:
       - ml-net
     restart: unless-stopped

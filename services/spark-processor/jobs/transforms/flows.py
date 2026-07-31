@@ -43,6 +43,31 @@ def _is_anonymized_port(port_col: "F.Column") -> "F.Column":
     return ~port_col.rlike(r"^[0-9]+$")
 
 
+def _flows_role_features(
+    df_silver: DataFrame,
+    *,
+    own_comp: str,
+    other_comp: str,
+    port_col: str,
+    prefix: str,
+    other_count_label: str,
+) -> DataFrame:
+    """Per-computer flow aggregates for one directional role (outbound or inbound).
+
+    ``flows_computer_features`` calls this once per role with the source/destination
+    columns and role-relevant port swapped, so the two aggregations can't drift apart.
+    """
+    return df_silver.groupBy(F.col(own_comp).alias("computer_id")).agg(
+        F.count(F.lit(1)).alias(f"{prefix}_count_distinct"),
+        F.countDistinct(other_comp).alias(f"{prefix}_distinct_{other_count_label}"),
+        F.sum("byte_count").alias(f"{prefix}_bytes_sum_distinct"),
+        F.sum("packet_count").alias(f"{prefix}_packets_sum_distinct"),
+        F.sum(F.when(_is_anonymized_port(F.col(port_col)), 1).otherwise(0)).alias(
+            f"{prefix}_anonymized_port_count_distinct"
+        ),
+    )
+
+
 def flows_computer_features(df_silver: DataFrame) -> DataFrame:
     """Per-computer network-flow features for the unified feature table, keyed by ``computer_id``.
 
@@ -55,22 +80,20 @@ def flows_computer_features(df_silver: DataFrame) -> DataFrame:
     coalesces those to 0. Output columns: ``computer_id`` plus the ten
     ``flows_{out,in}_*`` features.
     """
-    outbound = df_silver.groupBy(F.col("src_comp").alias("computer_id")).agg(
-        F.count(F.lit(1)).alias("flows_out_count_distinct"),
-        F.countDistinct("dst_comp").alias("flows_out_distinct_targets"),
-        F.sum("byte_count").alias("flows_out_bytes_sum_distinct"),
-        F.sum("packet_count").alias("flows_out_packets_sum_distinct"),
-        F.sum(F.when(_is_anonymized_port(F.col("src_port")), 1).otherwise(0)).alias(
-            "flows_out_anonymized_port_count_distinct"
-        ),
+    outbound = _flows_role_features(
+        df_silver,
+        own_comp="src_comp",
+        other_comp="dst_comp",
+        port_col="src_port",
+        prefix="flows_out",
+        other_count_label="targets",
     )
-    inbound = df_silver.groupBy(F.col("dst_comp").alias("computer_id")).agg(
-        F.count(F.lit(1)).alias("flows_in_count_distinct"),
-        F.countDistinct("src_comp").alias("flows_in_distinct_sources"),
-        F.sum("byte_count").alias("flows_in_bytes_sum_distinct"),
-        F.sum("packet_count").alias("flows_in_packets_sum_distinct"),
-        F.sum(F.when(_is_anonymized_port(F.col("dst_port")), 1).otherwise(0)).alias(
-            "flows_in_anonymized_port_count_distinct"
-        ),
+    inbound = _flows_role_features(
+        df_silver,
+        own_comp="dst_comp",
+        other_comp="src_comp",
+        port_col="dst_port",
+        prefix="flows_in",
+        other_count_label="sources",
     )
     return outbound.join(inbound, on="computer_id", how="fullouter")
