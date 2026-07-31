@@ -81,6 +81,12 @@ x-airflow-common: &airflow-common
   networks:
     - airflow-net
     - pipeline-net
+  # Sized above the observed peaks of a full 7-day backfill
+  deploy:
+    resources:
+      limits:
+        cpus: '1.5'
+        memory: 1G
 
 services:
   minio:
@@ -103,6 +109,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
     # On pipeline-net for the producers/Spark/delivery + on ml-net so the
     # consumer can reach only the delivered bucket (via a scoped service account).
     networks:
@@ -169,6 +180,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
     networks:
       - pipeline-net
 
@@ -214,6 +230,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
     networks:
       - airflow-net
 
@@ -337,6 +358,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
     depends_on:
       minio:
         condition: service_healthy
