@@ -12,7 +12,11 @@ set -euo pipefail
 
 SECRETS_DIR="secrets"
 mkdir -p "$SECRETS_DIR"
-chmod 700 "$SECRETS_DIR"
+# 0711 (not 0700): the DAG bind-mounts this whole dir into task containers at
+# /run/secrets, and a bind mount carries the host mode through -- the task images
+# run as a non-root uid that is not the owner, so they need the traverse bit to
+# open the files by name. Others still cannot list the directory.
+chmod 711 "$SECRETS_DIR"
 
 # Load current .env values (if present) so an existing local stack keeps its
 # credentials when they are migrated out of .env into secret files.
@@ -25,11 +29,12 @@ rand() { python3 -c "import secrets;print(secrets.token_hex(${1:-24}))"; }
 fernet() { python3 -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"; }
 
 # write_secret <name> <value>: write only when the file is absent (idempotent).
-# Mode 0644 (not 0600): compose bind-mounts each secret into the container with
-# the host file's owner/mode, and the Airflow services run as a non-root user
-# (AIRFLOW_UID:0) that is neither the file's owner nor able to read a 0600 file on
-# Linux -- so it needs the world-read bit. These files are generated, gitignored,
-# never committed, and ephemeral, so world-readable on the host is acceptable.
+# Mode 0644 (not 0600), and only useful paired with the 0711 dir above: compose
+# and the DAG bind-mount these files into containers with the host file's
+# owner/mode, and the Airflow services (AIRFLOW_UID:0) and task images (uid 1000)
+# are neither the owner nor able to read a 0600 file on Linux -- so they need the
+# world-read bit. These files are generated, gitignored, never committed, and
+# ephemeral, so world-readable on the host is acceptable.
 # Existing files are re-chmod'd so a local stack created with the old 0600 mode
 # self-heals on the next run.
 write_secret() {
