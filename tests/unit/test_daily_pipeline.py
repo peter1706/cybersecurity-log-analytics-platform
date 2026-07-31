@@ -36,6 +36,7 @@ def settings() -> PipelineSettings:
             "GOLD_BUCKET": "gold",
             "DELIVERED_BUCKET": "delivered",
             "SCHEMA_VERSION": "v1",
+            "SPARK_DRIVER_MEMORY": "3g",
         },
     )
 
