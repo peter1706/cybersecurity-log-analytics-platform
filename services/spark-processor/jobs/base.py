@@ -152,9 +152,7 @@ class MedallionJob(ABC):
                     # Record checksum + lineage + schema as part of the same task,
                     # after a successful write. A catalog failure fails the task.
                     lineage, schema = self.governance_records(count, result.columns)
-                    catalog.record_checksum(
-                        self.checksum_record(dataframe_checksum(result), count)
-                    )
+                    catalog.record_checksum(self.checksum_record(dataframe_checksum(result), count))
                     catalog.record_lineage(lineage)
                     catalog.register_schema(schema)
                     print(
@@ -376,16 +374,13 @@ class ComputerFeaturesJob:
             # Cache each source's windowed Silver: it is scanned by checksum
             # validation (per day), the presence check, and the feature builder.
             # Without caching each source would be re-read from Silver 3+ times.
-            frames = {
-                src: self._windowed_silver(src, start_day).persist() for src in self.sources
-            }
+            frames = {src: self._windowed_silver(src, start_day).persist() for src in self.sources}
             features = None
             try:
                 # Validate every upstream Silver partition before reading it.
                 self._validate_silver(catalog, frames)
                 source_present = {
-                    src: self._source_present(frames[src], expected_days)
-                    for src in self.sources
+                    src: self._source_present(frames[src], expected_days) for src in self.sources
                 }
 
                 # Cached: consumed by the empty-guard count, the write, and the

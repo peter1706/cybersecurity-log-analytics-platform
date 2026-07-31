@@ -77,17 +77,13 @@ class LocalKmsClient(pe.KmsClient):
 
     def wrap_key(self, key_bytes: bytes, master_key_identifier: str) -> str:
         nonce = os.urandom(_NONCE_BYTES)
-        ciphertext = AESGCM(self._master_key(master_key_identifier)).encrypt(
-            nonce, key_bytes, None
-        )
+        ciphertext = AESGCM(self._master_key(master_key_identifier)).encrypt(nonce, key_bytes, None)
         return base64.b64encode(nonce + ciphertext).decode("ascii")
 
     def unwrap_key(self, wrapped_key: str, master_key_identifier: str) -> bytes:
         raw = base64.b64decode(wrapped_key)
         nonce, ciphertext = raw[:_NONCE_BYTES], raw[_NONCE_BYTES:]
-        return AESGCM(self._master_key(master_key_identifier)).decrypt(
-            nonce, ciphertext, None
-        )
+        return AESGCM(self._master_key(master_key_identifier)).decrypt(nonce, ciphertext, None)
 
 
 def _kms_factory(config: pe.KmsConnectionConfig) -> LocalKmsClient:
