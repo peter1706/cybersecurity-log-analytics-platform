@@ -8,10 +8,23 @@ requires-python = ">=3.11"
 line-length = 100
 target-version = "py311"
 extend-exclude = ["lanl_dataset", "data"]
+# First-party modules
+src = [
+    ".",
+    "airflow/dags",
+    "scripts",
+    "services/delivery",
+    "services/lanl-simulator",
+    "services/ml-mock",
+    "services/spark-processor",
+]
 
 [tool.ruff.lint]
 # pycodestyle (E/W), pyflakes (F), isort (I), pyupgrade (UP), bugbear (B)
 select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-third-party = ["airflow"]
 
 [tool.pytest.ini_options]
 # Make repo modules importable in tests without installing a package.
