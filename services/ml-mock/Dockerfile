@@ -1,6 +1,6 @@
 # Built from the repo root (see docker-compose build.context) so the shared
 # `catalog/` package can be layered in for read_secret() credential loading.
-FROM python:3.11-slim
+FROM python:3.11.15-slim-trixie
 
 RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin app
 WORKDIR /app

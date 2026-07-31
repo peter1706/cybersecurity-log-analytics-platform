@@ -1,6 +1,6 @@
 # Built from the repo root (see docker-compose build.context) so the shared
 # `catalog/` governance client can be layered into the image.
-FROM python:3.11-slim
+FROM python:3.11.15-slim-trixie
 
 # Java runtime for Spark.
 RUN apt-get update \
