@@ -15,8 +15,8 @@ Outputs one file per source (``auth.txt``, ``proc.txt``, ``flows.txt``,
 """
 
 import argparse
-import os
 import random
+from pathlib import Path
 
 SECONDS_PER_DAY = 86400
 DAYS = 4  # day indices 0..3
@@ -138,10 +138,10 @@ def gen_dns(rng: random.Random, comps: list[str]) -> list[list]:
     return rows
 
 
-def write_csv(path: str, rows: list[list]) -> None:
+def write_csv(path: Path, rows: list[list]) -> None:
     """Write rows as header-less CSV, sorted chronologically by time."""
     rows = sorted(rows, key=lambda r: r[0])
-    with open(path, "w", encoding="utf-8") as fh:
+    with path.open("w", encoding="utf-8") as fh:
         for row in rows:
             fh.write(",".join(str(x) for x in row) + "\n")
     print(f"wrote {len(rows):>5} rows -> {path}")
@@ -152,23 +152,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--out",
-        default=os.path.join(os.path.dirname(__file__), "..", "data", "sample"),
+        type=Path,
+        default=Path(__file__).resolve().parent.parent / "data" / "sample",
         help="output directory for the generated source files",
     )
     args = parser.parse_args()
 
-    out_dir = os.path.abspath(args.out)
-    os.makedirs(out_dir, exist_ok=True)
+    out_dir = args.out.resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     rng = random.Random(SEED)
     comps = computers()
     users = human_users()
     machines = machine_accounts(comps)
 
-    write_csv(os.path.join(out_dir, "auth.txt"), gen_auth(rng, comps, users, machines))
-    write_csv(os.path.join(out_dir, "proc.txt"), gen_proc(rng, comps, users, machines))
-    write_csv(os.path.join(out_dir, "flows.txt"), gen_flows(rng, comps))
-    write_csv(os.path.join(out_dir, "dns.txt"), gen_dns(rng, comps))
+    write_csv(out_dir / "auth.txt", gen_auth(rng, comps, users, machines))
+    write_csv(out_dir / "proc.txt", gen_proc(rng, comps, users, machines))
+    write_csv(out_dir / "flows.txt", gen_flows(rng, comps))
+    write_csv(out_dir / "dns.txt", gen_dns(rng, comps))
     print(f"\nGenerated {DAYS} day(s) of synthetic data in {out_dir}")
 
 

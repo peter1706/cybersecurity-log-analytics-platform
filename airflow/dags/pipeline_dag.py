@@ -46,6 +46,7 @@ def _spark_task_mem_limit(spark_driver_memory: str) -> str:
     driver_mib = int(value * _SPARK_MEM_UNIT_TO_MIB[unit])
     return f"{driver_mib + _SPARK_CONTAINER_MEM_OVERHEAD_MIB}m"
 
+
 # Structured failure alerts are emitted to the logs (no SMTP/e-mail), keeping the
 # stack fully offline-capable.
 _LOG = logging.getLogger("clap.pipeline")
@@ -255,7 +256,9 @@ class SparkJobOperator(_PlatformDockerOperator):
         day: str = DAY_TEMPLATE,
         **kwargs,
     ):
-        kwargs.setdefault("mem_limit", _spark_task_mem_limit(settings.task_environment["SPARK_DRIVER_MEMORY"]))
+        kwargs.setdefault(
+            "mem_limit", _spark_task_mem_limit(settings.task_environment["SPARK_DRIVER_MEMORY"])
+        )
         super().__init__(
             settings=settings,
             task_id=job,
@@ -273,7 +276,9 @@ class ComputerFeaturesOperator(_PlatformDockerOperator):
     """
 
     def __init__(self, *, settings: PipelineSettings, day: str = DAY_TEMPLATE, **kwargs):
-        kwargs.setdefault("mem_limit", _spark_task_mem_limit(settings.task_environment["SPARK_DRIVER_MEMORY"]))
+        kwargs.setdefault(
+            "mem_limit", _spark_task_mem_limit(settings.task_environment["SPARK_DRIVER_MEMORY"])
+        )
         super().__init__(
             settings=settings,
             task_id="silver_to_gold",

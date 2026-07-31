@@ -78,9 +78,7 @@ def _auth_role_features(
             F.sum(F.when(F.col("auth_success") == F.lit(False), 1).otherwise(0)).alias(
                 f"{prefix}_failed_count"
             ),
-            F.sum(F.when(F.col("auth_success").isNotNull(), 1).otherwise(0)).alias(
-                known_count_col
-            ),
+            F.sum(F.when(F.col("auth_success").isNotNull(), 1).otherwise(0)).alias(known_count_col),
         )
         .withColumn(
             f"{prefix}_failure_rate",

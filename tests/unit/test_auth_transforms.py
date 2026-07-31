@@ -1,6 +1,7 @@
 """Unit tests for the pure auth transforms (no MinIO/Delta required)."""
 
 import pytest
+
 from jobs.schemas import AUTH_COLUMNS
 from jobs.transforms import auth_bronze_to_silver, raw_to_bronze
 

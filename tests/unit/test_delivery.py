@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 
-import bundle
 import pytest
+
+import bundle
 
 # A sample opaque master-key string; bundle only hashes it for the manifest key id.
 SAMPLE_KEY = "sample-delivery-encryption-key-value=="

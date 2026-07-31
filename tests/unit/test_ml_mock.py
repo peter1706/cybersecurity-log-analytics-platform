@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import feature_contract
 import pytest
+
+import feature_contract
 
 
 class TestValidateSchema:
