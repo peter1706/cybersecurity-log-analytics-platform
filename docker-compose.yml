@@ -3,6 +3,13 @@
 # at the bottom) and with all credentials delivered as container secrets mounted
 # at /run/secrets/<name> (see the `secrets:` block).
 
+# Bounds json-file log growth for every long-running/one-shot service below.
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-airflow-common: &airflow-common
   build:
     context: .
@@ -78,6 +85,7 @@ x-airflow-common: &airflow-common
   user: "${AIRFLOW_UID}:0"
   group_add:
     - "${DOCKER_GID}"
+  logging: *default-logging
   networks:
     - airflow-net
     - pipeline-net
@@ -114,6 +122,8 @@ services:
         limits:
           cpus: '1'
           memory: 1G
+    logging: *default-logging
+    restart: unless-stopped
     # On pipeline-net for the producers/Spark/delivery + on ml-net so the
     # consumer can reach only the delivered bucket (via a scoped service account).
     networks:
@@ -157,6 +167,7 @@ services:
       mc admin user svcacct add --access-key "$$CK" --secret-key "$$CS" --policy /tmp/ml-consumer.json local "$$RU" || echo "ml-consumer service account already exists" &&
       echo "buckets + delivered-scoped ml-consumer account ready";
       '
+    logging: *default-logging
     networks:
       - pipeline-net
 
@@ -166,7 +177,7 @@ services:
   # delivery task containers and the Airflow callbacks record here, but the ML
   # consumer (ml-net) never can.
   postgres-catalog:
-    image: postgres:15
+    image: postgres:15.15
     environment:
       POSTGRES_USER: ${CATALOG_DB_USER}
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_catalog_password
@@ -185,6 +196,8 @@ services:
         limits:
           cpus: '0.5'
           memory: 256M
+    logging: *default-logging
+    restart: unless-stopped
     networks:
       - pipeline-net
 
@@ -212,11 +225,12 @@ services:
       done;
       echo 'catalog migrations applied';
       "
+    logging: *default-logging
     networks:
       - pipeline-net
 
   airflow-postgres:
-    image: postgres:15
+    image: postgres:15.15
     environment:
       POSTGRES_USER: ${AIRFLOW_DB_USER}
       POSTGRES_PASSWORD_FILE: /run/secrets/airflow_db_password
@@ -235,6 +249,8 @@ services:
         limits:
           cpus: '0.5'
           memory: 256M
+    logging: *default-logging
+    restart: unless-stopped
     networks:
       - airflow-net
 
@@ -363,6 +379,7 @@ services:
         limits:
           cpus: '1'
           memory: 512M
+    logging: *default-logging
     depends_on:
       minio:
         condition: service_healthy
