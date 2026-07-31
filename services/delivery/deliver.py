@@ -23,11 +23,12 @@ import sys
 import traceback
 
 import boto3
-import bundle
+import pyarrow as pa
 import pyarrow.parquet as pq
-from botocore.client import Config
+from botocore.client import BaseClient, Config
 from deltalake import DeltaTable
 
+import bundle
 from catalog import CatalogClient, read_secret
 from catalog.parquet_encryption import write_encrypted_parquet
 
@@ -52,7 +53,7 @@ def _storage_options() -> dict[str, str]:
     }
 
 
-def _s3_client():
+def _s3_client() -> BaseClient:
     access, secret = _minio_credentials()
     return boto3.client(
         "s3",
@@ -64,7 +65,7 @@ def _s3_client():
     )
 
 
-def read_gold_partition(anchor_day: int, window_days: int):
+def read_gold_partition(anchor_day: int, window_days: int) -> pa.Table:
     """Return the Gold partition as a pyarrow Table in canonical column order."""
     gold_bucket = os.environ.get("GOLD_BUCKET", "gold")
     uri = f"s3://{gold_bucket}/{bundle.DATASET}"

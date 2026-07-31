@@ -25,16 +25,16 @@ import sys
 import traceback
 
 import boto3
-import feature_contract
-from botocore.client import Config
+from botocore.client import BaseClient, Config
 
+import feature_contract
 from catalog import read_secret
 from catalog.parquet_encryption import read_encrypted_parquet
 
 DATASET = "computer_features"
 
 
-def _s3_client():
+def _s3_client() -> BaseClient:
     # Least privilege: a MinIO service account scoped to the `delivered` bucket
     # only (never the layer buckets), read from container secrets.
     return boto3.client(

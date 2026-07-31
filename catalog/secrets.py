@@ -40,14 +40,17 @@ def read_secret(
     :data:`os.environ`) so callers that already resolve config from an injected
     mapping can route the fallback through it. Raises :class:`KeyError` when the
     credential resolves to none of the above, so a task fails fast instead of
-    authenticating with an empty credential.
+    authenticating with an empty credential. Raises :class:`ValueError` if
+    ``name`` would resolve outside the secrets directory.
     """
     environ: Mapping[str, str] = os.environ if env_mapping is None else env_mapping
-    secrets_dir = environ.get("SECRETS_DIR", DEFAULT_SECRETS_DIR)
-    path = Path(secrets_dir) / name
+    secrets_dir = Path(environ.get("SECRETS_DIR", DEFAULT_SECRETS_DIR))
+    path = secrets_dir / name
+    if not path.resolve().is_relative_to(secrets_dir.resolve()):
+        raise ValueError(f"Invalid secret name {name!r}: escapes the secrets directory")
     try:
         value = path.read_text(encoding="utf-8").strip()
-    except OSError:
+    except FileNotFoundError:
         value = ""
     if value:
         return value

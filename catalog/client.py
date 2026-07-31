@@ -91,6 +91,7 @@ Statement = tuple[str, tuple[Any, ...]]
 
 
 def build_insert_job_run(record: JobRun) -> Statement:
+    """Build the upsert statement for one ``job_runs`` telemetry row."""
     sql = (
         "INSERT INTO job_runs "
         "(dag_id, task_id, run_id, job, source, day, status, try_number, "
@@ -118,6 +119,7 @@ def build_insert_job_run(record: JobRun) -> Statement:
 
 
 def build_insert_lineage(record: Lineage) -> Statement:
+    """Build the insert statement for one data-lineage record."""
     sql = (
         "INSERT INTO lineage "
         "(source, day, from_layer, to_layer, record_count, schema_version, window_days) "
@@ -136,6 +138,7 @@ def build_insert_lineage(record: Lineage) -> Statement:
 
 
 def build_upsert_checksum(record: Checksum) -> Statement:
+    """Build the upsert statement for one layer/source/day checksum record."""
     sql = (
         "INSERT INTO checksums "
         "(layer, source, day, window_days, algorithm, checksum, record_count) "
@@ -162,6 +165,17 @@ def build_select_checksum(
     source: str | None = None,
     window_days: int | None = None,
 ) -> Statement:
+    """Build the lookup statement for a previously recorded checksum.
+
+    Args:
+        layer: Medallion layer the checksum was recorded against.
+        day: Day index the checksum covers.
+        source: Event source, or ``None`` for a layer-wide checksum.
+        window_days: Rolling-window length, or ``None`` for a non-windowed checksum.
+
+    Returns:
+        The ``(sql, params)`` statement selecting ``checksum`` and ``record_count``.
+    """
     sql = (
         "SELECT checksum, record_count FROM checksums "
         "WHERE layer = %s AND COALESCE(source, '') = COALESCE(%s, '') "
@@ -171,6 +185,7 @@ def build_select_checksum(
 
 
 def build_upsert_schema(record: SchemaRegistration) -> Statement:
+    """Build the upsert statement for one source/layer schema registration."""
     sql = (
         "INSERT INTO schema_registry (source, layer, schema_version, columns) "
         "VALUES (%s, %s, %s, %s::jsonb) "
@@ -187,6 +202,7 @@ def build_upsert_schema(record: SchemaRegistration) -> Statement:
 
 
 def build_upsert_delivery_manifest(record: DeliveryManifest) -> Statement:
+    """Build the upsert statement for one delivered-partition manifest record."""
     sql = (
         "INSERT INTO delivery_manifests "
         "(dataset, dataset_version, schema_version, window_days, anchor_day, "

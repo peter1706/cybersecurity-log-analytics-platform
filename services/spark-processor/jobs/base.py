@@ -157,17 +157,17 @@ class MedallionJob(ABC):
                     )
                     catalog.record_lineage(lineage)
                     catalog.register_schema(schema)
+                    print(
+                        f"{self.name}: wrote {count:,} rows -> {self.target_path()} "
+                        f"(source={self.source.name}, day={self.day})",
+                        flush=True,
+                    )
+                    return count
                 finally:
                     result.unpersist()
             finally:
                 if self.cache_input:
                     input_df.unpersist()
-        print(
-            f"{self.name}: wrote {count:,} rows -> {self.target_path()} "
-            f"(source={self.source.name}, day={self.day})",
-            flush=True,
-        )
-        return count
 
 
 class LandToBronzeJob(MedallionJob):
@@ -417,14 +417,14 @@ class ComputerFeaturesJob:
                 )
                 catalog.record_lineage(lineage)
                 catalog.register_schema(schema)
+                print(
+                    f"{self.name}: wrote {count:,} rows -> {target} "
+                    f"(anchor_day={self.day}, window={window}d, present={source_present})",
+                    flush=True,
+                )
+                return count
             finally:
                 if features is not None:
                     features.unpersist()
                 for frame in frames.values():
                     frame.unpersist()
-        print(
-            f"{self.name}: wrote {count:,} rows -> {target} "
-            f"(anchor_day={self.day}, window={window}d, present={source_present})",
-            flush=True,
-        )
-        return count
