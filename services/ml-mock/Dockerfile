@@ -8,7 +8,24 @@ WORKDIR /app
 COPY services/ml-mock/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY services/ml-mock/feature_contract.py services/ml-mock/consume.py services/ml-mock/dashboard.py ./
+COPY services/ml-mock/feature_contract.py \
+     services/ml-mock/consume.py \
+     services/ml-mock/dashboard.py \
+     services/ml-mock/anomaly.py \
+     services/ml-mock/airflow_client.py \
+     services/ml-mock/auth.py \
+     services/ml-mock/volume_view.py \
+     services/ml-mock/partition_view.py \
+     services/ml-mock/schema_view.py \
+     services/ml-mock/feature_labels.py \
+     services/ml-mock/watchlist.py \
+     services/ml-mock/metrics.py \
+     services/ml-mock/charts.py \
+     services/ml-mock/theme.py \
+     ./
+# Dark Streamlit theme for the dashboard run mode: without it Streamlit serves
+# its light base theme and its own text stays unreadable on the dark stylesheet.
+COPY services/ml-mock/streamlit_config.toml ./.streamlit/config.toml
 # Shared package: ml-mock only uses catalog.read_secret to load its credentials
 # from mounted secrets -- it never talks to the governance catalog DB, so the
 # Postgres driver is intentionally not installed here.

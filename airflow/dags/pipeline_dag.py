@@ -252,18 +252,28 @@ class SparkJobOperator(_PlatformDockerOperator):
         *,
         settings: PipelineSettings,
         job: str,
-        source: str,
+        source: str = "auth",
         day: str = DAY_TEMPLATE,
+        day_end: str | None = None,
+        all_sources: bool = False,
         **kwargs,
     ):
         kwargs.setdefault(
             "mem_limit", _spark_task_mem_limit(settings.task_environment["SPARK_DRIVER_MEMORY"])
         )
+        command = [job]
+        if all_sources:
+            command.append("--all-sources")
+        else:
+            command.extend(["--source", source])
+        command.extend(["--day", day])
+        if day_end is not None:
+            command.extend(["--day-end", day_end])
         super().__init__(
             settings=settings,
             task_id=job,
             image=settings.img_spark,
-            command=[job, "--source", source, "--day", day],
+            command=command,
             **kwargs,
         )
 
@@ -275,15 +285,32 @@ class ComputerFeaturesOperator(_PlatformDockerOperator):
     source's Silver being ready.
     """
 
-    def __init__(self, *, settings: PipelineSettings, day: str = DAY_TEMPLATE, **kwargs):
+    def __init__(
+        self,
+        *,
+        settings: PipelineSettings,
+        day: str = DAY_TEMPLATE,
+        window_days: str | None = None,
+        **kwargs,
+    ):
         kwargs.setdefault(
             "mem_limit", _spark_task_mem_limit(settings.task_environment["SPARK_DRIVER_MEMORY"])
         )
+        command = ["silver_to_gold", "--day", day]
+        if window_days is not None:
+            command.extend(["--window-days", window_days])
+        environment = None
+        if window_days is not None:
+            environment = {
+                **settings.task_environment,
+                "ROLLING_WINDOW_DAYS": window_days,
+            }
         super().__init__(
             settings=settings,
             task_id="silver_to_gold",
             image=settings.img_spark,
-            command=["silver_to_gold", "--day", day],
+            command=command,
+            **({"environment": environment} if environment is not None else {}),
             **kwargs,
         )
 
@@ -291,12 +318,29 @@ class ComputerFeaturesOperator(_PlatformDockerOperator):
 class DeliveryOperator(_PlatformDockerOperator):
     """Delivers the anchor day's Gold partition to the ``delivered`` bucket."""
 
-    def __init__(self, *, settings: PipelineSettings, day: str = DAY_TEMPLATE, **kwargs):
+    def __init__(
+        self,
+        *,
+        settings: PipelineSettings,
+        day: str = DAY_TEMPLATE,
+        window_days: str | None = None,
+        **kwargs,
+    ):
+        command = ["--day", day]
+        if window_days is not None:
+            command.extend(["--window-days", window_days])
+        environment = None
+        if window_days is not None:
+            environment = {
+                **settings.task_environment,
+                "ROLLING_WINDOW_DAYS": window_days,
+            }
         super().__init__(
             settings=settings,
             task_id="deliver",
             image=settings.img_delivery,
-            command=["--day", day],
+            command=command,
+            **({"environment": environment} if environment is not None else {}),
             **kwargs,
         )
 
@@ -309,15 +353,32 @@ class MlConsumeOperator(_PlatformDockerOperator):
     catalog password (defense in depth alongside the network boundary).
     """
 
-    def __init__(self, *, settings: PipelineSettings, day: str = DAY_TEMPLATE, **kwargs):
+    def __init__(
+        self,
+        *,
+        settings: PipelineSettings,
+        day: str = DAY_TEMPLATE,
+        window_days: str | None = None,
+        **kwargs,
+    ):
         scoped = [_secret_mount(settings.host_project_dir, name) for name in ML_CONSUMER_SECRETS]
+        command = ["--day", day]
+        if window_days is not None:
+            command.extend(["--window-days", window_days])
+        environment = None
+        if window_days is not None:
+            environment = {
+                **settings.task_environment,
+                "ROLLING_WINDOW_DAYS": window_days,
+            }
         super().__init__(
             settings=settings,
             task_id="ml_consume",
             image=settings.img_ml_mock,
-            command=["--day", day],
+            command=command,
             network_mode=settings.ml_network_name,
             secret_mounts=scoped,
+            **({"environment": environment} if environment is not None else {}),
             **kwargs,
         )
 

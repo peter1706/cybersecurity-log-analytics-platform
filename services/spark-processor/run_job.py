@@ -46,6 +46,15 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="if set, process the inclusive day range [--day, --day-end] in one session",
     )
+    parser.add_argument(
+        "--window-days",
+        type=int,
+        default=None,
+        help=(
+            "rolling window length for silver_to_gold "
+            "(default: ROLLING_WINDOW_DAYS env / 7); ignored by other jobs"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -65,7 +74,7 @@ def main() -> None:
         spark = build_spark(f"clap-{args.job}-{span}")
         try:
             for day in days:
-                ComputerFeaturesJob(spark, day).run()
+                ComputerFeaturesJob(spark, day, window_days=args.window_days).run()
         finally:
             spark.stop()
         return

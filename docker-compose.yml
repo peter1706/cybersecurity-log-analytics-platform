@@ -361,10 +361,18 @@ services:
     environment:
       MINIO_ENDPOINT: ${MINIO_ENDPOINT}
       DELIVERED_BUCKET: ${DELIVERED_BUCKET}
+      # Airflow REST API (JWT) for feature_reprocessing triggers; dashboard joins
+      # airflow-net solely for this path and still has no catalog/medallion access.
+      AIRFLOW_API_URL: ${AIRFLOW_API_URL:-http://airflow-api-server:8080}
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER}
+      ROLLING_WINDOW_DAYS: ${ROLLING_WINDOW_DAYS:-7}
     secrets:
       - minio_ml_consumer_key
       - minio_ml_consumer_secret
       - delivery_encryption_key
+      - ml_dashboard_username
+      - ml_dashboard_password
+      - airflow_admin_password
     ports:
       - "${ML_DASHBOARD_PORT:-8501}:8501"
     healthcheck:
@@ -383,8 +391,11 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+      airflow-api-server:
+        condition: service_healthy
     networks:
       - ml-net
+      - airflow-net
     restart: unless-stopped
 
 volumes:
@@ -417,12 +428,17 @@ secrets:
     file: ./secrets/airflow_admin_password
   delivery_encryption_key:
     file: ./secrets/delivery_encryption_key
+  ml_dashboard_username:
+    file: ./secrets/ml_dashboard_username
+  ml_dashboard_password:
+    file: ./secrets/ml_dashboard_password
 
 # Three isolated networks (least privilege by construction):
 #   pipeline-net  data plane: MinIO, postgres-catalog, and the producer/Spark/
 #                 delivery task containers + Airflow (for callbacks + socket).
 #   airflow-net   orchestration control plane: airflow-postgres + Airflow services.
-#   ml-net        consumer plane: MinIO (delivered bucket only) + ml-mock.
+#   ml-net        consumer plane: MinIO (delivered bucket only) + ml-mock /
+#                 ml-dashboard (ml-dashboard also joins airflow-net for API triggers).
 # The catalog shares pipeline-net (rather than its own network) because a
 # DockerOperator task container attaches to a single network yet needs both the
 # object store and the governance catalog; the ML consumer stays fully isolated
