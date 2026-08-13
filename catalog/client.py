@@ -16,7 +16,7 @@ row (checksums keyed by ``(layer, source, day, window_days)``, manifests by
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -184,6 +184,29 @@ def build_select_checksum(
     return sql, (layer, source, day, window_days)
 
 
+def build_select_checksum_counts(
+    layers: Sequence[str],
+    day_start: int,
+    day_end: int,
+) -> Statement:
+    """Build a range query for checksum ``record_count`` rows across layers.
+
+    Args:
+        layers: Layer names to include (e.g. ``landing``, ``bronze``, ``silver``).
+        day_start: Inclusive lower bound on ``day``.
+        day_end: Inclusive upper bound on ``day``.
+
+    Returns:
+        ``(sql, params)`` selecting ``layer, source, day, window_days, record_count``.
+    """
+    sql = (
+        "SELECT layer, source, day, window_days, record_count FROM checksums "
+        "WHERE layer = ANY(%s) AND day BETWEEN %s AND %s "
+        "ORDER BY layer, COALESCE(source, ''), day, COALESCE(window_days, -1)"
+    )
+    return sql, (list(layers), day_start, day_end)
+
+
 def build_upsert_schema(record: SchemaRegistration) -> Statement:
     """Build the upsert statement for one source/layer schema registration."""
     sql = (
@@ -298,3 +321,19 @@ class CatalogClient:
             cur.execute(sql, params)
             row = cur.fetchone()
         return None if row is None else row[0]
+
+    def list_checksum_counts(
+        self,
+        layers: Sequence[str],
+        day_start: int,
+        day_end: int,
+    ) -> list[tuple[str, str | None, int, int | None, int | None]]:
+        """Return checksum count rows for ``layers`` in ``[day_start, day_end]``.
+
+        Each tuple is ``(layer, source, day, window_days, record_count)``.
+        """
+        sql, params = build_select_checksum_counts(layers, day_start, day_end)
+        with self._conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [(row[0], row[1], int(row[2]), row[3], row[4]) for row in rows]

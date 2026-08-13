@@ -15,6 +15,12 @@ pyarrow==17.0.0
 cryptography==48.0.1
 # Used by Airflow DAG settings loader (also present in the Airflow image).
 PyYAML===6.0.3
+# Dashboard anomaly-scoring unit tests (also a runtime dep of ml-mock).
+pandas==2.2.3
+# Dashboard chart-spec unit tests (also a runtime dep of ml-mock). narwhals is
+# pinned with altair: on narwhals 2.x, Altair's dataframe detection fails.
+altair==5.4.1
+narwhals==1.14.2
 # DAG structural tests (tests/unit/test_daily_pipeline.py) need Airflow + the
 # docker provider. Install separately with the official constraints file, e.g.:
 #   pip install "apache-airflow==3.3.0" \

@@ -15,7 +15,7 @@ PyArrow generates a random per-file data encryption key (DEK), hands it to
 :meth:`LocalKmsClient.wrap_key` to be envelope-encrypted under the master key, and
 stores the wrapped DEK in the Parquet footer; the reader unwraps it symmetrically.
 The master key is the ``delivery_encryption_key`` container secret (any opaque
-string -- a 256-bit AES key is derived from it via HKDF-SHA256), shared by the
+string -- a 256-bit AES key is derived from it via SHA-256), shared by the
 producer (``delivery``) and the consumer (``ml-mock``).
 
 This module is shared (via the ``catalog`` package baked into both service images)
@@ -28,14 +28,13 @@ service images -- ``catalog``'s own requirements stay driver-only, and importing
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pyarrow.parquet.encryption as pe
-from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 # Internal master-key label used inside the Parquet footer key metadata. It maps a
 # key to the master-key material in the KMS connection config; it is not a secret
@@ -56,8 +55,8 @@ class LocalKmsClient(pe.KmsClient):
     """In-process KMS: envelope-encrypts per-file DEKs under a master key.
 
     ``config.custom_kms_conf`` maps :data:`MASTER_KEY_ID` to the opaque master-key
-    string; a 256-bit AES key is derived from it with HKDF-SHA256 so any secret
-    format (e.g. a Fernet-style key) works. DEK wrapping/unwrapping is AES-GCM, so a
+    string; a 256-bit AES key is derived from it with SHA-256 so any secret format
+    (e.g. a Fernet-style key) works. DEK wrapping/unwrapping is AES-GCM, so a
     tampered wrapped key fails authentication on unwrap.
     """
 
@@ -67,13 +66,7 @@ class LocalKmsClient(pe.KmsClient):
 
     def _master_key(self, master_key_identifier: str) -> bytes:
         secret = self._master_keys[master_key_identifier]
-        hkdf = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=None,
-            info=b"catalog.parquet_encryption master key v1",
-        )
-        return hkdf.derive(secret.encode("utf-8"))
+        return hashlib.sha256(secret.encode("utf-8")).digest()
 
     def wrap_key(self, key_bytes: bytes, master_key_identifier: str) -> str:
         nonce = os.urandom(_NONCE_BYTES)
