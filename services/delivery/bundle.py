@@ -115,6 +115,7 @@ def build_manifest(
     key: bytes | str,
     columns: list[str] | None = None,
     created_at: str | None = None,
+    volume_summary: dict | None = None,
 ) -> dict:
     """Build the delivery manifest.
 
@@ -124,8 +125,12 @@ def build_manifest(
     the columns for schema conformance and the encryption scheme + key id. The
     consumer's runtime integrity guarantee is the authenticated (AES-GCM)
     decryption itself, so it does not re-derive this checksum from the ciphertext.
+
+    When provided, ``volume_summary`` is a catalog-derived snapshot of layer
+    record counts for the window (landing through delivered) so the consumer
+    dashboard can show aggregation context without catalog access.
     """
-    return {
+    manifest = {
         "dataset": DATASET,
         "dataset_version": f"{DATASET}-w{window_days}-d{anchor_day:02d}",
         "schema_version": schema_version,
@@ -137,6 +142,54 @@ def build_manifest(
         "checksum_sha256": sha256_hex(plaintext),
         "encryption": {"scheme": ENCRYPTION_SCHEME, "key_id": key_id(key)},
         "data_object": data_key(anchor_day, window_days),
+    }
+    if volume_summary is not None:
+        manifest["volume_summary"] = volume_summary
+    return manifest
+
+
+def build_volume_summary(
+    *,
+    anchor_day: int,
+    window_days: int,
+    checksum_rows: list[tuple[str, str | None, int, int | None, int | None]],
+    delivered_record_count: int,
+) -> dict:
+    """Build the per-partition aggregation-volume snapshot for a delivery manifest.
+
+    Args:
+        anchor_day: Gold/delivered as-of day.
+        window_days: Rolling window length used for this partition.
+        checksum_rows: Catalog checksum rows as
+            ``(layer, source, day, window_days, record_count)``.
+        delivered_record_count: Feature-row count written to the delivered store.
+
+    Returns:
+        A JSON-serializable volume summary keyed by layer.
+    """
+    event_days = list(range(max(0, anchor_day - window_days + 1), anchor_day + 1))
+    by_layer: dict[str, list[dict]] = {"landing": [], "bronze": [], "silver": []}
+    gold_count: int | None = None
+
+    for layer, source, day, row_window, record_count in checksum_rows:
+        count = 0 if record_count is None else int(record_count)
+        if layer in by_layer:
+            entry: dict = {"source": source, "day": day, "record_count": count}
+            by_layer[layer].append(entry)
+        elif layer == "gold" and day == anchor_day and row_window == window_days:
+            gold_count = count
+
+    return {
+        "event_days": event_days,
+        "landing": by_layer["landing"],
+        "bronze": by_layer["bronze"],
+        "silver": by_layer["silver"],
+        "gold": {
+            "anchor_day": anchor_day,
+            "window_days": window_days,
+            "record_count": gold_count if gold_count is not None else delivered_record_count,
+        },
+        "delivered": {"record_count": delivered_record_count},
     }
 
 

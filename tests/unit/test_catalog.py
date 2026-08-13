@@ -207,9 +207,10 @@ class TestSqlBuilders:
 
 
 class _FakeCursor:
-    def __init__(self, fetch_result=None):
+    def __init__(self, fetch_result=None, fetch_all_result=None):
         self.executed: list[tuple] = []
         self._fetch = fetch_result
+        self._fetch_all = fetch_all_result if fetch_all_result is not None else []
 
     def __enter__(self):
         return self
@@ -223,10 +224,13 @@ class _FakeCursor:
     def fetchone(self):
         return self._fetch
 
+    def fetchall(self):
+        return list(self._fetch_all)
+
 
 class _FakeConnection:
-    def __init__(self, fetch_result=None):
-        self.cursor_obj = _FakeCursor(fetch_result)
+    def __init__(self, fetch_result=None, fetch_all_result=None):
+        self.cursor_obj = _FakeCursor(fetch_result, fetch_all_result)
         self.commits = 0
         self.closed = False
 
@@ -257,6 +261,17 @@ class TestExecutor:
 
         missing = CatalogClient(_FakeConnection(fetch_result=None))
         assert missing.get_checksum("bronze", 0, source="auth") is None
+
+    def test_list_checksum_counts_returns_typed_rows(self):
+        rows = [("landing", "auth", 0, None, 12), ("gold", None, 0, 7, 3)]
+        client = CatalogClient(_FakeConnection(fetch_all_result=rows))
+        assert client.list_checksum_counts(("landing", "gold"), 0, 0) == [
+            ("landing", "auth", 0, None, 12),
+            ("gold", None, 0, 7, 3),
+        ]
+        sql, params = client_module.build_select_checksum_counts(("landing", "gold"), 0, 0)
+        assert "FROM checksums" in sql
+        assert params == (["landing", "gold"], 0, 0)
 
     def test_context_manager_closes_connection(self):
         conn = _FakeConnection()

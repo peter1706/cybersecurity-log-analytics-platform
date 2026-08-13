@@ -109,15 +109,31 @@ def deliver(anchor_day: int, window_days: int) -> dict:
     plaintext = buf.getvalue()
 
     ciphertext = write_encrypted_parquet(table, key)
-    manifest = bundle.build_manifest(
-        schema_version=schema_version,
-        window_days=window_days,
-        anchor_day=anchor_day,
-        record_count=record_count,
-        plaintext=plaintext,
-        key=key,
-        columns=table.column_names,
-    )
+
+    start_day = max(0, anchor_day - window_days + 1)
+    with CatalogClient.connect() as catalog:
+        checksum_rows = catalog.list_checksum_counts(
+            ("landing", "bronze", "silver", "gold"),
+            start_day,
+            anchor_day,
+        )
+        volume_summary = bundle.build_volume_summary(
+            anchor_day=anchor_day,
+            window_days=window_days,
+            checksum_rows=checksum_rows,
+            delivered_record_count=record_count,
+        )
+        manifest = bundle.build_manifest(
+            schema_version=schema_version,
+            window_days=window_days,
+            anchor_day=anchor_day,
+            record_count=record_count,
+            plaintext=plaintext,
+            key=key,
+            columns=table.column_names,
+            volume_summary=volume_summary,
+        )
+        catalog.record_delivery_manifest(bundle.manifest_record(manifest))
 
     client = _s3_client()
     _ensure_bucket(client, delivered_bucket)
@@ -131,10 +147,6 @@ def deliver(anchor_day: int, window_days: int) -> dict:
         Key=bundle.manifest_key(anchor_day, window_days),
         Body=bundle.manifest_bytes(manifest),
     )
-    # Persist the manifest to the governance catalog as part of the same task
-    # (in addition to the manifest.json shipped in the delivered bucket).
-    with CatalogClient.connect() as catalog:
-        catalog.record_delivery_manifest(bundle.manifest_record(manifest))
     print(
         f"delivery: anchor_day={anchor_day} window_days={window_days} "
         f"-> s3://{delivered_bucket}/{bundle.data_key(anchor_day, window_days)} "

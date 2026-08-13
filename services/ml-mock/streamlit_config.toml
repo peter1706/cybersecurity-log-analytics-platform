@@ -1,0 +1,19 @@
+# Streamlit theme for the consumer dashboard, baked into the image at
+# /app/.streamlit/config.toml.
+#
+# Without this, Streamlit serves its light base theme (following the browser's
+# colour-scheme preference), so widget labels, captions and tables keep a dark
+# foreground while the custom stylesheet paints a dark background -- text becomes
+# unreadable. Pinning the dark base also replaces Streamlit's red accent with the
+# dashboard's cyan, so focus rings match the rest of the interface.
+#
+# Colours mirror the glass palette in theme.py; keep them in sync.
+[theme]
+base = "dark"
+primaryColor = "#38e0d0"
+backgroundColor = "#0b1120"
+secondaryBackgroundColor = "#131b2e"
+textColor = "#e6ecf7"
+
+[browser]
+gatherUsageStats = false
