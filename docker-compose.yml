@@ -239,7 +239,10 @@ services:
       python -c \"import json,os; p='/opt/airflow/auth/simple_auth_manager_passwords.json.generated'; pw=open('/run/secrets/airflow_admin_password').read().strip(); open(p,'w').write(json.dumps({os.environ['AIRFLOW_ADMIN_USER']: pw}))\" &&
       echo 'simple auth password file ready'
       "
-    restart: unless-stopped
+    # One-shot init: must NOT restart. A restart policy other than "no" can make
+    # `compose up` never register this container's `service_completed_successfully`
+    # transition on some Compose versions, so dependents wait forever
+    restart: "no"
 
   airflow-api-server:
     <<: *airflow-common
