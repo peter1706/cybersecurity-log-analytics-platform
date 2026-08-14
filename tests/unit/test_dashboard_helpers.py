@@ -70,6 +70,29 @@ def test_score_computers_requires_computer_id():
         anomaly.score_computers(pd.DataFrame({"auth_out_event_count": [1]}))
 
 
+def test_score_computers_log1p_keeps_sparse_driver_visible():
+    """A heavy-tailed auth volume must not always beat a true sparse outlier."""
+    n = 40
+    df = pd.DataFrame(
+        {
+            "computer_id": [f"c{i}" for i in range(n)],
+            "anchor_day": [6] * n,
+            "window_days": [7] * n,
+            # Dense moderate auth volume for most hosts; one busy host.
+            "auth_out_event_count": [30] * (n - 2) + [80, 30],
+            # Sparse feature: almost all zeros, one clear DNS outlier.
+            "dns_lookup_count": [0] * (n - 1) + [500],
+        }
+    )
+    result = anomaly.score_computers(df)
+    dns_row = result.contributions[
+        (result.contributions["computer_id"] == f"c{n - 1}")
+        & (result.contributions["rank"] <= 1)
+    ]
+    assert not dns_row.empty
+    assert dns_row.iloc[0]["feature"] == "dns_lookup_count"
+
+
 def test_airflow_client_fetch_token_and_trigger_body():
     config = AirflowConfig(base_url="http://airflow:8080/", username="admin", password="secret")
     client = AirflowClient(config)
@@ -142,6 +165,8 @@ def test_phase_volume_rows_lists_before_after_each_hop():
     totals = volume_view.layer_volume_totals(volume)
     assert totals[0] == {"layer": "landing", "record_count": 150}
     assert totals[-1] == {"layer": "delivered", "record_count": 10}
+    assert volume_view.layer_row_total(volume, "landing") == 150
+    assert volume_view.layer_row_total({}, "landing") is None
 
 
 def _manifest(
@@ -441,6 +466,44 @@ def test_health_rows_render_without_card_frame():
     assert "health-row" in markup
     assert "glass-card" not in markup
     assert "400" in markup
+
+
+def test_health_group_collapses_rows_behind_a_summary():
+    rows = [("Authentication events", "Delivered", "ok"), ("DNS lookups", "Missing", "bad")]
+    markup = theme.health_group("Data sources", ("1 of 2 delivered", "bad"), rows)
+    assert markup.startswith("<details")
+    assert "<summary" in markup
+    assert "1 of 2 delivered" in markup
+    assert "health-bad" in markup
+    # Collapsed by default, and every grouped row is still present.
+    assert " open" not in markup
+    assert "Authentication events" in markup
+    assert "DNS lookups" in markup
+    assert " open" in theme.health_group("Data sources", ("2 of 2", "ok"), rows, start_open=True)
+
+
+def test_watchlist_row_marks_risk_selection_and_bar_share():
+    markup = theme.watchlist_row(
+        3,
+        "C1234",
+        "Failed outgoing sign-ins",
+        "High",
+        8.25,
+        fill=0.5,
+        selected=True,
+    )
+    assert theme.ACCENTS["rose"] in markup
+    assert "wl-row-selected" in markup
+    assert ">03<" in markup
+    assert "C1234" in markup
+    assert ">8.2<" in markup
+    assert "width:50.0%" in markup
+
+    plain = theme.watchlist_row(1, "<script>", "Data sent", "Medium", 2.0, fill=4.0)
+    assert "wl-row-selected" not in plain
+    assert "<script>" not in plain
+    # An out-of-range share is clamped so the bar cannot overflow its track.
+    assert "width:100.0%" in plain
 
 
 def test_schema_diff_reports_missing_unexpected_and_order():

@@ -275,13 +275,19 @@ def _render_health(manifest: dict, df: pd.DataFrame) -> None:
     schema_ok = schema_view.schema_match(
         manifest.get("columns"), feature_contract.EXPECTED_COLUMNS
     )
+    source_flags = feature_labels.source_health_flags(df)
     source_rows = [
-        (name, "Delivered" if ok else "Missing", "ok" if ok else "bad")
-        for name, ok in feature_labels.source_health_flags(df)
+        (name, "Delivered" if ok else "Missing", "ok" if ok else "bad") for name, ok in source_flags
     ]
-    source_rows.append(("Days covered", str(int(manifest["window_days"])), "plain"))
+    delivered = sum(1 for _, ok in source_flags if ok)
+    source_summary = (
+        f"{delivered} of {len(source_flags)} delivered",
+        "ok" if delivered == len(source_flags) else "bad",
+    )
     volume = manifest.get("volume_summary")
-    records_label = f"{int(manifest['record_count']):,}"
+    delivered_label = f"{int(manifest['record_count']):,}"
+    raw_total = volume_view.layer_row_total(volume, "landing") if isinstance(volume, dict) else None
+    raw_label = f"{raw_total:,}" if raw_total is not None else "—"
 
     with st.container(key="delivery_health"):
         _html('<div class="health-heading">Delivery information</div>')
@@ -303,15 +309,24 @@ def _render_health(manifest: dict, df: pd.DataFrame) -> None:
             ):
                 _schema_dialog(manifest)
 
-        _html(theme.health_rows(source_rows))
+        _html(theme.health_group("Data sources", source_summary, source_rows))
+        _html(
+            theme.health_rows(
+                [
+                    ("Anchor day", str(int(manifest["anchor_day"])), "plain"),
+                    ("Days covered", str(int(manifest["window_days"])), "plain"),
+                    ("Raw data records", raw_label, "plain"),
+                ]
+            )
+        )
 
         rec_label, rec_value, rec_action = st.columns(
             [2.0, 1.0, 1.35], vertical_alignment="center"
         )
         with rec_label:
-            st.markdown("Records")
+            st.markdown("Aggregated records")
         with rec_value:
-            _html(f'<span class="health-value">{records_label}</span>')
+            _html(f'<span class="health-value">{delivered_label}</span>')
         with rec_action:
             if isinstance(volume, dict):
                 if st.button(
@@ -352,7 +367,7 @@ def _render_triage(kpis: dict) -> None:
         ),
         ("Highest risk", str(highest), highest_note, "amber"),
         (
-            "High risk",
+            "High risk count",
             f"{kpis['high']:,}",
             f"top 1% · {kpis['medium']:,} at medium",
             "violet",
@@ -364,97 +379,55 @@ def _render_triage(kpis: dict) -> None:
             _html(theme.key_card(label, value, note, accent))
 
 
-RISK_CELL_COLOURS = {
-    "High": theme.ACCENTS["rose"],
-    "Medium": theme.ACCENTS["amber"],
-}
+def _render_watchlist_cards(rows: list[dict], *, height: int = 360) -> None:
+    """Render the ranked watchlist as clickable glass cards.
+
+    Each card carries a full-size transparent button, so a click anywhere on the
+    card selects that computer. A fixed pixel height keeps the (up to 50-row)
+    list from stretching the page: extra rows scroll inside the stack.
+    """
+    shown_ids = [str(row["computer_id"]) for row in rows]
+    # A selection can outlive a filter change, so bound it to the rows shown.
+    if st.session_state.get("selected_computer_id") not in shown_ids:
+        st.session_state.selected_computer_id = shown_ids[0]
+    selected = str(st.session_state.selected_computer_id)
+    top_score = max(float(row["score"]) for row in rows) or 1.0
+
+    with st.container(height=height, border=False, key="watchlist_cards"):
+        for index, row in enumerate(rows):
+            computer_id = str(row["computer_id"])
+            with st.container(key=f"wl_row_{index}"):
+                _html(
+                    theme.watchlist_row(
+                        int(row["rank"]),
+                        computer_id,
+                        str(row["reason"]),
+                        str(row["risk"]),
+                        float(row["score"]),
+                        fill=float(row["score"]) / top_score,
+                        selected=computer_id == selected,
+                    )
+                )
+                # Re-run so the picked card's highlight and the detail panel
+                # both reflect the new selection in this same interaction.
+                if st.button(f"Select {computer_id}", key=f"wl_pick_{index}"):
+                    st.session_state.selected_computer_id = computer_id
+                    st.rerun()
 
 
-def _risk_cell_style(value: object) -> str:
-    colour = RISK_CELL_COLOURS.get(str(value), theme.TEXT_COLOR)
-    return f"color: {colour}; font-weight: 700; background-color: {colour}22"
+def _render_watchlist_panel(result: anomaly.AnomalyResult) -> None:
+    """Render the ranked watchlist card (filters, search, fixed-height stack).
 
-
-def _render_watchlist_table(rows: list[dict]) -> None:
-    """Render the ranked watchlist; clicking a row selects that computer."""
-    table = pd.DataFrame(rows).rename(
-        columns={
-            "rank": "#",
-            "computer_id": "Computer",
-            "reason": "Why it stands out",
-            "risk": "Risk",
-            "score": "Score",
-        }
-    )
-    styled = table.style.map(_risk_cell_style, subset=["Risk"]).map(
-        lambda _value: f"color: {theme.ACCENTS['cyan']}; font-weight: 700",
-        subset=["Computer"],
-    )
-
-    event = st.dataframe(
-        styled,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="watchlist_table",
-        column_config={
-            "#": st.column_config.NumberColumn(width="small"),
-            "Score": st.column_config.ProgressColumn(
-                "Score",
-                format="%.1f",
-                min_value=0.0,
-                max_value=float(max(r["score"] for r in rows)) or 1.0,
-            ),
-        },
-    )
-    # A stale selection index can outlive a filter change, so bound it to the rows shown.
-    picked = [index for index in event.selection["rows"] if index < len(rows)]
-    if picked:
-        st.session_state.selected_computer_id = rows[picked[0]]["computer_id"]
-    elif st.session_state.get("selected_computer_id") not in {r["computer_id"] for r in rows}:
-        st.session_state.selected_computer_id = rows[0]["computer_id"]
-
-
-def _render_pattern_zone(result: anomaly.AnomalyResult) -> None:
-    """Render what kinds of unusual activity dominate this delivery."""
-    left, right = st.columns(2)
-    drivers = watchlist.driver_frequency(result.scored, result.contributions)
-    families = watchlist.attention_by_family(result.scored, result.contributions)
-
-    with left, st.container(border=True):
-        _html(theme.chart_label("Most common drivers"))
-        if not drivers:
-            st.info("No attention computers in this delivery.")
-        else:
-            st.altair_chart(
-                charts.count_bars(drivers, value_title="Computers", accent="violet"),
-                use_container_width=True,
-                theme=None,
-            )
-
-    with right, st.container(border=True):
-        _html(theme.chart_label("Attention by activity family"))
-        if not families:
-            st.info("No attention computers in this delivery.")
-        else:
-            st.altair_chart(
-                charts.count_bars(families, value_title="Computers", accent="cyan"),
-                use_container_width=True,
-                theme=None,
-            )
-
-
-def _render_investigate(result: anomaly.AnomalyResult) -> None:
-    """Render watchlist + explain panel for unusual computers."""
+    Runs before the explain panel so the row-click selection it writes to
+    ``selected_computer_id`` is visible when the detail panel reads it.
+    """
     scored = result.scored
     default_id = watchlist.default_selected_computer(scored)
     if not st.session_state.get("selected_computer_id"):
         st.session_state.selected_computer_id = default_id
 
-    left, right = st.columns([1.2, 1], gap="medium")
-    with left, st.container(border=True):
-        _html(theme.chart_label("Watchlist — most unusual"))
+    with st.container(border=True):
+        st.caption("Select a computer to inspect it on the right.")
         filter_label = st.radio(
             "Risk filter",
             options=["All attention", "High only", "Medium"],
@@ -484,7 +457,7 @@ def _render_investigate(result: anomaly.AnomalyResult) -> None:
             scored, risk_filter=risk_filter, search=search
         )
         if rows:
-            _render_watchlist_table(rows)
+            _render_watchlist_cards(rows)
             caption = watchlist.watchlist_caption(filtered_total, len(rows))
             if caption:
                 st.caption(caption)
@@ -492,8 +465,11 @@ def _render_investigate(result: anomaly.AnomalyResult) -> None:
             st.info("No computers match this filter.")
             st.session_state.selected_computer_id = default_id
 
-    with right, st.container(border=True):
-        _html(theme.chart_label("Why this computer stands out"))
+
+def _render_explain_panel(result: anomaly.AnomalyResult) -> None:
+    """Render the 'why this computer stands out' detail for the current pick."""
+    scored = result.scored
+    with st.container(border=True):
         selected = st.session_state.get("selected_computer_id")
         if not selected:
             st.write("Select a computer in the watchlist to see what stands out.")
@@ -516,7 +492,7 @@ def _render_investigate(result: anomaly.AnomalyResult) -> None:
                     st.write("Nothing looks unusually high for this computer.")
                 else:
                     st.altair_chart(
-                        charts.driver_bars(rows),
+                        charts.driver_bars(rows, height=200),
                         use_container_width=True,
                         theme=None,
                     )
@@ -526,25 +502,9 @@ def _render_investigate(result: anomaly.AnomalyResult) -> None:
                     )
         st.caption(
             "Estimated in this view by comparing each computer's delivered "
-            "features against the rest of the group — not the production model. "
+            "features against the rest of the group. "
             "Risk levels are relative to this delivery (top 1% High, next 4% Medium)."
         )
-
-
-def _render_partition(_manifest: dict, df: pd.DataFrame) -> None:
-    """Render triage KPIs and the investigate watchlist for one partition."""
-    try:
-        result = anomaly.score_computers(df)
-    except ValueError as exc:
-        st.info(f"Unusual activity could not be estimated for this delivery: {exc}")
-        return
-    kpis = watchlist.triage_kpis(result.scored, result.contributions)
-    _html(theme.zone_label("Triage"))
-    _render_triage(kpis)
-    _html(theme.zone_label("Investigate"))
-    _render_investigate(result)
-    _html(theme.zone_label("What kinds of unusual activity"))
-    _render_pattern_zone(result)
 
 
 def _render_advanced_actions(manifests: list[dict]) -> None:
@@ -666,8 +626,13 @@ def main() -> None:
     if st.session_state.get("delivery_choice") not in key_to_manifest:
         st.session_state.delivery_choice = options[0]
 
-    left, right = st.columns([1, 3], gap="large")
-    with left:
+    # The risk KPIs get their own full-width row (filled once the delivery is
+    # scored) rather than sitting beside the taller delivery-information card,
+    # which left most of that column empty. The findings row below then splits
+    # into delivery context, the watchlist, and the selected computer.
+    kpi_zone = st.container()
+    body = st.columns([1.5, 2.2, 1.7], gap="large")
+    with body[0]:
         _html(theme.zone_label("Deliveries"))
         chosen_key = st.selectbox(
             "Choose a delivery",
@@ -682,8 +647,7 @@ def main() -> None:
             st.session_state.selected_computer_id = None
 
     if not key:
-        with right:
-            st.warning("Encryption key is not configured; this delivery cannot be opened.")
+        st.warning("Encryption key is not configured; this delivery cannot be opened.")
         _render_advanced_actions(manifests)
         return
 
@@ -698,16 +662,36 @@ def main() -> None:
                 "does not match. Ask an operator to rebuild the dashboard "
                 "and delivery services from the same shared catalog package."
             )
-        with right:
-            st.error(f"Could not open this delivery: {detail}")
+        st.error(f"Could not open this delivery: {detail}")
         _render_advanced_actions(manifests)
         return
 
     st.session_state.active_manifest = selected
-    with left:
+    with body[0]:
         _render_health(selected, df)
-    with right:
-        _render_partition(selected, df)
+
+    try:
+        result = anomaly.score_computers(df)
+    except ValueError as exc:
+        with kpi_zone:
+            _html(theme.zone_label("Computer Risk Statistics"))
+            st.info(f"Unusual activity could not be estimated for this delivery: {exc}")
+        _render_advanced_actions(manifests)
+        return
+
+    kpis = watchlist.triage_kpis(result.scored, result.contributions)
+    with kpi_zone:
+        _html(theme.zone_label("Computer Risk Statistics"))
+        _render_triage(kpis)
+
+    # Watchlist renders before the detail panel so a row click is already in
+    # session state when the detail panel reads the selected computer.
+    with body[1]:
+        _html(theme.zone_label("Investigate Affected Computers"))
+        _render_watchlist_panel(result)
+    with body[2]:
+        _html(theme.zone_label("Why this computer stands out"))
+        _render_explain_panel(result)
 
     _render_advanced_actions(manifests)
 

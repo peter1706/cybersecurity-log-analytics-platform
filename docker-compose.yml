@@ -177,7 +177,7 @@ services:
       - pipeline-net
 
   catalog-migrate:
-    image: postgres:15
+    image: postgres:15.15
     depends_on:
       postgres-catalog:
         condition: service_healthy

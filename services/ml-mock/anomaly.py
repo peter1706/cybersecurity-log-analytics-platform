@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 KEY_COLUMNS = ("computer_id", "anchor_day", "window_days")
@@ -37,9 +38,11 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
 def score_computers(df: pd.DataFrame, *, top_features: int = 5) -> AnomalyResult:
     """Attach a robust z-score anomaly score and top feature contributions.
 
-    For each numeric feature, compute a median/MAD robust z-score across
-    computers in the partition. The composite ``anomaly_score`` is the mean of
-    absolute z-scores. Contributions list the highest-|z| features per computer.
+    For each numeric feature, apply ``log1p`` (after clipping negatives to 0) so
+    heavy-tailed volume counts cannot dominate the score, then compute a
+    median/MAD robust z-score across computers in the partition. The composite
+    ``anomaly_score`` is the mean of absolute z-scores. Contributions list the
+    highest-|z| features per computer.
 
     Args:
         df: Delivered computer_features rows for one partition.
@@ -65,6 +68,9 @@ def score_computers(df: pd.DataFrame, *, top_features: int = 5) -> AnomalyResult
     z_parts: dict[str, pd.Series] = {}
     for col in feature_cols:
         series = pd.to_numeric(df[col], errors="coerce")
+        # Count-like features are heavy-tailed; log1p keeps a few mega-volume
+        # hosts from drowning every other driver in the watchlist.
+        series = pd.Series(np.log1p(series.clip(lower=0)), index=series.index)
         median = float(series.median(skipna=True))
         mad = float((series - median).abs().median(skipna=True))
         scale = 1.4826 * mad if mad > 0 else float(series.std(skipna=True) or 1.0)

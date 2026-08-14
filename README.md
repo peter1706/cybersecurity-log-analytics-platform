@@ -5,9 +5,18 @@ This repository includes a batch-processing platform which should ingest, store 
 
 ![Cybersecurity Log Analytics Platform architecture](docs/architecture/Cybersecurity_Log_Analytics_Platform_Architecture.drawio.png)
 
+See [PLATFORM_ABSTRACT.md](PLATFORM_ABSTRACT.md) for a one-paragraph summary,
+[docs/use_case/USE_CASE_DESCRIPTION.md](docs/use_case/USE_CASE_DESCRIPTION.md) for
+the business problem, [docs/dataset/DATASET_DESCRIPTION.md](docs/dataset/DATASET_DESCRIPTION.md)
+for the LANL dataset and demonstration subset, and
+[docs/requirements/](docs/requirements/) for the system-owner and data-science-team
+requirements the platform is built against.
+
 ## Running the platform
 
-Prerequisites: Docker + Docker Compose, Python 3, and `make`.
+Prerequisites: Docker + Docker Compose, Python 3, and `make`. The full 14-day
+volume run below is comfortable on ≥8 GB RAM / ≥4 cores (`SPARK_DRIVER_MEMORY`
+and friends in `.env.example` can be lowered for smaller machines).
 
 ```bash
 cp .env.example .env       # non-sensitive config; edit if needed
@@ -43,6 +52,21 @@ make e2e-full-14 # backfills the full 14-day demonstration subset (days 0..13)
 
 `make e2e` and `make e2e-full` build the images and bring up the full Docker Compose
 stack themselves, so a plain `make test-unit` is enough for quick iteration.
+
+**To confirm the platform holds up at realistic volume**, run the full 14-day
+backfill end to end — one command, no setup beyond `.env`:
+
+```bash
+cp .env.example .env    # if not already done
+make e2e-full-14        # build, start the stack, backfill 14 days, verify Gold/delivered
+```
+
+This builds every image, starts the stack, replays and processes the entire
+~19.8M-row / 14-day subset (seeding the full 7-day rolling window for every one
+of the 14 anchor days), delivers + consumes each day, and asserts the multi-day
+Gold/delivered output in MinIO — end to end in **~12 minutes** (image build
+included) on a 12-core / 36 GB machine. `make down` afterwards stops the stack
+(volumes are kept, so a re-run is fast and safe — every stage is idempotent).
 
 ### Data volume processed by the e2e tests
 

@@ -121,8 +121,89 @@ div[data-testid="column"]:has(.chart-card) > div { height: 100%; }
   border-radius: 999px; padding: 0.12rem 0.6rem;
 }
 
-/* Watchlist rows are clickable — make that obvious. */
-.st-key-watchlist_table div[data-testid="stDataFrame"] { cursor: pointer; }
+/* The watchlist is a scrolling stack of glass rows. Each row's Streamlit
+   button is stretched invisibly over its card, so a click anywhere on the card
+   selects that computer without a separate visible control. */
+.st-key-watchlist_cards {
+  border-radius: 16px;
+  border: 1px solid rgba(148, 172, 214, 0.12);
+  background: rgba(12, 18, 33, 0.42);
+  padding: 0.5rem 0.6rem;
+}
+/* Row spacing comes from each card's own margin: the overlay button sits out of
+   flow, so a block gap would also open dead space inside every row. */
+.st-key-watchlist_cards [data-testid="stVerticalBlock"] { gap: 0; }
+[class*="st-key-wl_row_"] { position: relative; }
+[class*="st-key-wl_row_"] [data-testid="stElementContainer"] { margin: 0 !important; }
+/* The card is purely decorative and must never swallow the click; the button's
+   own element container is stretched over the whole row on top of it. */
+[class*="st-key-wl_row_"] [data-testid="stMarkdown"],
+[class*="st-key-wl_row_"] .wl-row { pointer-events: none; }
+[class*="st-key-wl_row_"] [data-testid="stElementContainer"]:has([data-testid="stButton"]) {
+  position: absolute; inset: 0; z-index: 3;
+}
+[class*="st-key-wl_row_"] [data-testid="stButton"],
+[class*="st-key-wl_row_"] [data-testid="stButton"] button {
+  width: 100%; height: 100%; min-height: 0;
+  pointer-events: auto;
+}
+[class*="st-key-wl_row_"] [data-testid="stButton"] button {
+  opacity: 0; border: none; background: transparent; cursor: pointer;
+}
+.wl-row {
+  border-radius: 14px;
+  margin-bottom: 0.45rem;
+  padding: 0.55rem 0.75rem 0.6rem 0.75rem;
+  background: linear-gradient(150deg, rgba(30, 41, 66, 0.72), rgba(17, 24, 42, 0.55));
+  border: 1px solid rgba(148, 172, 214, 0.13);
+  border-left: 3px solid var(--accent);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+[class*="st-key-wl_row_"]:hover .wl-row {
+  background: linear-gradient(150deg, rgba(38, 52, 82, 0.85), rgba(20, 28, 48, 0.7));
+  border-color: rgba(56, 224, 208, 0.3);
+}
+.wl-row-selected {
+  border-color: rgba(56, 224, 208, 0.5);
+  background: linear-gradient(150deg, rgba(41, 57, 88, 0.9), rgba(21, 30, 51, 0.72));
+  box-shadow: inset 0 0 0 1px rgba(56, 224, 208, 0.22), 0 14px 30px -24px rgba(0, 0, 0, 0.9);
+}
+.wl-head { display: flex; align-items: baseline; gap: 0.5rem; }
+.wl-rank {
+  font-size: 0.68rem; font-weight: 700; color: #7c8aa5;
+  font-variant-numeric: tabular-nums;
+}
+.wl-id {
+  font-size: 0.95rem; font-weight: 700; color: #38e0d0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wl-risk {
+  margin-left: auto;
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-radius: 999px; padding: 0.08rem 0.45rem;
+  white-space: nowrap;
+}
+.wl-score {
+  font-size: 0.9rem; font-weight: 700; color: #f2f6ff;
+  font-variant-numeric: tabular-nums; text-align: right; min-width: 2.2rem;
+}
+.wl-reason {
+  font-size: 0.78rem; color: #9fb2d4; margin-top: 0.15rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wl-bar {
+  margin-top: 0.4rem; height: 4px; border-radius: 999px;
+  background: rgba(148, 172, 214, 0.14); overflow: hidden;
+}
+.wl-bar > span {
+  display: block; height: 100%; border-radius: 999px;
+  background: linear-gradient(
+    90deg, color-mix(in srgb, var(--accent) 45%, transparent), var(--accent)
+  );
+}
 
 div[data-testid="stRadio"] label p { font-size: 0.86rem; }
 div[data-testid="stExpander"] details {
@@ -178,9 +259,23 @@ div[data-testid="stExpander"] details {
   margin-bottom: 0;
 }
 /* Keep label / status / Details → on one baseline: Streamlit columns stack
-   markdown and buttons with different default margins. */
-.st-key-delivery_health [data-testid="stHorizontalBlock"] [data-testid="column"] > div {
-  display: flex; align-items: center; min-height: 1.75rem;
+   markdown and buttons with different default margins, and the pill button is
+   shorter than a text line, so it floats above the label without this.
+   Both column test ids are targeted because Streamlit renamed `column` to
+   `stColumn`; matching only the old name silently stops centring the row. */
+.st-key-delivery_health [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+.st-key-delivery_health [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+  align-self: stretch;
+  min-height: 2rem;
+}
+.st-key-delivery_health [data-testid="stHorizontalBlock"] [data-testid="stColumn"] > div,
+.st-key-delivery_health [data-testid="stHorizontalBlock"] [data-testid="column"] > div,
+.st-key-delivery_health [data-testid="stHorizontalBlock"] [data-testid="stVerticalBlock"] {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
 }
 .st-key-delivery_health [data-testid="stHorizontalBlock"] [data-testid="stElementContainer"],
 .st-key-delivery_health [data-testid="stHorizontalBlock"] [data-testid="stMarkdown"],
@@ -191,6 +286,39 @@ div[data-testid="stExpander"] details {
 }
 .st-key-delivery_health [data-testid="stHorizontalBlock"] p {
   margin: 0; font-size: 0.87rem; color: #cdd8ec; line-height: 1.3;
+}
+/* Each row must stay on one line: a mid-word wrap ("Pas / sed") makes the row
+   two lines tall and drags the Details → control off the shared baseline. */
+.st-key-delivery_health [data-testid="stHorizontalBlock"] p,
+.st-key-delivery_health .health-row span,
+.st-key-delivery_health .health-ok,
+.st-key-delivery_health .health-bad,
+.st-key-delivery_health .health-value {
+  white-space: nowrap;
+}
+.st-key-delivery_health .health-row span:first-child {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* The per-source rows collapse into one "Data sources" group so the card stays
+   compact, and expand in place to show each source as before. */
+.st-key-delivery_health .health-group > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.st-key-delivery_health .health-group > summary::-webkit-details-marker { display: none; }
+.st-key-delivery_health .health-group > summary::marker { content: ""; }
+.st-key-delivery_health .health-group > summary:hover { color: #e6ecf7; }
+.st-key-delivery_health .health-chevron {
+  display: inline-block; width: 0.7rem; margin-right: 0.25rem;
+  color: #7c8aa5; font-weight: 700;
+  transition: transform 0.15s ease;
+}
+.st-key-delivery_health .health-group[open] .health-chevron { transform: rotate(90deg); }
+.st-key-delivery_health .health-group-body {
+  margin-left: 0.7rem;
+  padding-left: 0.6rem;
+  border-left: 1px solid rgba(148, 172, 214, 0.14);
 }
 
 /* Compact "Details →" controls on Schema check and Records rows. */
@@ -274,6 +402,32 @@ def health_rows(rows: list[tuple[str, str, str]]) -> str:
     )
 
 
+def health_group(
+    title: str,
+    summary: tuple[str, str],
+    rows: list[tuple[str, str, str]],
+    *,
+    start_open: bool = False,
+) -> str:
+    """Return HTML for a collapsible group of health rows.
+
+    ``summary`` is the ``(value, kind)`` shown on the always-visible summary
+    line; ``rows`` are the ``(label, value, kind)`` rows revealed on expand.
+    Uses a native ``<details>`` element so expanding costs no server rerun.
+    """
+    classes = {"ok": "health-ok", "bad": "health-bad"}
+    value, kind = summary
+    return (
+        f'<details class="health-group"{" open" if start_open else ""}>'
+        f'<summary class="health-row health-summary">'
+        f'<span><span class="health-chevron">›</span>{escape(title)}</span>'
+        f'<span class="{classes.get(kind, "health-value")}">{escape(value)}</span>'
+        f"</summary>"
+        f'<div class="health-group-body">{health_rows(rows)}</div>'
+        f"</details>"
+    )
+
+
 def inline_value(value: str, note: str = "", accent: str = "cyan") -> str:
     """Return a key number without a card frame, for use inside a chart card."""
     colour = ACCENTS.get(accent, ACCENTS["cyan"])
@@ -298,6 +452,38 @@ def risk_pill(title: str, risk: str) -> str:
     return (
         f'<div class="risk-head"><span class="risk-title">{escape(title)}</span>'
         f'<span class="risk-pill" style="--accent:{colour}">{escape(risk)} risk</span></div>'
+    )
+
+
+def watchlist_row(
+    rank: int,
+    computer_id: str,
+    reason: str,
+    risk: str,
+    score: float,
+    *,
+    fill: float,
+    selected: bool = False,
+) -> str:
+    """Return the HTML for one watchlist row card.
+
+    ``fill`` is the score as a 0–1 share of the highest score in the list and
+    drives the inline bar; ``selected`` highlights the currently inspected row.
+    """
+    colour = ACCENTS.get(RISK_ACCENTS.get(risk, "cyan"), ACCENTS["cyan"])
+    width = max(0.0, min(1.0, fill)) * 100
+    classes = "wl-row wl-row-selected" if selected else "wl-row"
+    return (
+        f'<div class="{classes}" style="--accent:{colour}">'
+        f'<div class="wl-head">'
+        f'<span class="wl-rank">{rank:02d}</span>'
+        f'<span class="wl-id">{escape(computer_id)}</span>'
+        f'<span class="wl-risk">{escape(risk)}</span>'
+        f'<span class="wl-score">{score:.1f}</span>'
+        f"</div>"
+        f'<div class="wl-reason">{escape(reason)}</div>'
+        f'<div class="wl-bar"><span style="width:{width:.1f}%"></span></div>'
+        f"</div>"
     )
 
 
