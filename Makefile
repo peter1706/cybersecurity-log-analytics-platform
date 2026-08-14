@@ -1,5 +1,10 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint fmt test test-unit test-e2e build secrets up down pipeline backfill e2e e2e-full clean
+.PHONY: help install lint fmt test test-unit test-e2e build secrets up down pipeline backfill e2e e2e-full e2e-full-14 clean
+
+# Day range shared by `backfill` and `e2e-full` (inclusive). The demonstration
+# subset in data/subset/ covers days 0..13 -- see `e2e-full-14` for the full run.
+START ?= 0
+END ?= 6
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -44,9 +49,12 @@ backfill: ## Backfill days START..END (default 0..6) to seed the rolling window
 e2e: pipeline ## Run the full pipeline then verify Gold output
 	pytest tests/e2e -m e2e
 
-e2e-full: ## Backfill a full 7-day window (days 0..6) then verify multi-day Gold
-	bash scripts/e2e_full_window.sh 0 6
-	pytest tests/e2e -m e2e_full
+e2e-full: ## Backfill days START..END (default 0..6) then verify multi-day Gold
+	bash scripts/e2e_full_window.sh $(START) $(END)
+	E2E_FULL_ANCHOR_DAY=$(END) pytest tests/e2e -m e2e_full
+
+e2e-full-14: ## Backfill the full 14-day demonstration subset (days 0..13) then verify
+	$(MAKE) e2e-full START=0 END=13
 
 clean: ## Remove local caches and generated data layers
 	rm -rf .pytest_cache .ruff_cache **/__pycache__ \

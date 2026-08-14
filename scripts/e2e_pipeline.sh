@@ -9,6 +9,11 @@ set -euo pipefail
 DAY="${1:-0}"
 LOGICAL_DATE="2026-01-01"
 
+if [ ! -f .env ]; then
+  echo "ERROR: .env not found. Copy .env.example to .env first." >&2
+  exit 1
+fi
+
 # DockerOperator bind-mounts data/subset from the host, so it needs an absolute
 # host path. Override whatever is in .env for this run.
 export HOST_PROJECT_DIR="$(pwd)"

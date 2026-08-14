@@ -14,7 +14,7 @@ x-airflow-common: &airflow-common
   build:
     context: .
     dockerfile: airflow/Dockerfile
-  image: clap-airflow:dev
+  image: ${IMG_AIRFLOW}
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     # Credentials come from mounted secrets, not the environment: Airflow reads the
@@ -322,6 +322,10 @@ services:
 
   # --- Task images (built, not run as services). Launched by the DAG. ---
   # Built from the repo root so each image can COPY the shared catalog/ client.
+  # `image:` defaults to a local `:dev` tag (built by `make build`, no registry
+  # needed); .github/workflows/publish-images.yml publishes the same Dockerfiles
+  # to GHCR on every push to `main` and on release tags -- see .env.example for
+  # how to point IMG_* at a published, pinned tag instead of building locally.
   lanl-simulator:
     build:
       context: .
