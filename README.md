@@ -55,9 +55,8 @@ in total:
 - `make e2e-full` (7-day backfill, days 0-6): ~9.3M rows across all sources
   (~45 MB gzipped), which seeds a full rolling window for the Silver → Gold step.
 - `make e2e-full-14` (full 14-day backfill, days 0-13): the entire ~19.8M-row
-  demonstration subset (~101 MB gzipped). Runs in CI on every push to `main`
-  (`.github/workflows/ci.yml`, job `e2e-full-window`); PRs get the fast day-0
-  `e2e` job instead so review feedback stays quick.
+  demonstration subset (~101 MB gzipped). A manual/local reproducibility check,
+  not run in CI — the `e2e` job (day 0) is CI's e2e gate, on every PR into `main`.
 
 ## Published images
 
