@@ -10,7 +10,7 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-install: ## Install Python requirements for dev tooling
+install: ## Install Python requirements for development
 	python -m pip install -r requirements.txt
 
 lint: ## Run ruff lint checks
@@ -22,16 +22,16 @@ fmt: ## Auto-format with ruff
 
 test: test-unit
 
-test-unit: ## Run fast unit tests (no docker required)
+test-unit: ## Run unit tests (no docker required)
 	pytest -m "not e2e and not e2e_full"
 
-test-e2e: ## Verify Gold output in MinIO (run `make pipeline` first)
+test-e2e: ## Run e2e tests to verify Gold output in MinIO (run `make pipeline` first!)
 	pytest tests/e2e -m e2e
 
 build: ## Build all images (airflow, simulator, spark-processor, delivery, ml-mock)
 	docker compose --profile build build
 
-secrets: ## Create any missing container secrets in ./secrets (idempotent)
+secrets: ## Create any missing container secrets in ./secrets
 	bash scripts/init_secrets.sh
 
 up: secrets ## Start the core platform services
