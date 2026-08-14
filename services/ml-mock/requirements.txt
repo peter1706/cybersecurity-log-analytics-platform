@@ -3,3 +3,9 @@ pyarrow==17.0.0
 cryptography==48.0.1
 pandas==2.2.3
 streamlit==1.39.0
+# Dashboard charts are declared directly against Altair rather than relying on
+# it arriving transitively through Streamlit. narwhals is pinned with it: on
+# narwhals 2.x, Altair's dataframe detection fails and Streamlit hands Vega an
+# empty dataset, so the charts render as blank axes.
+altair==5.4.1
+narwhals==1.14.2

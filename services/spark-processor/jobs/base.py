@@ -277,9 +277,16 @@ class ComputerFeaturesJob:
         "dns": dns_computer_features,
     }
 
-    def __init__(self, spark: SparkSession, day: int):
+    def __init__(
+        self,
+        spark: SparkSession,
+        day: int,
+        window_days: int | None = None,
+    ):
         self.spark = spark
         self.day = day
+        # None -> resolve from ROLLING_WINDOW_DAYS at run time (DAG env override).
+        self._window_days = window_days
 
     def governance_records(
         self, count: int, columns: list[str], window: int
@@ -360,7 +367,7 @@ class ComputerFeaturesJob:
 
     def run(self) -> int:
         """Build and write the unified per-computer feature partition; return row count."""
-        window = rolling_window_days()
+        window = self._window_days if self._window_days is not None else rolling_window_days()
         start_day = self.day - window + 1
         # Window days that can actually exist (day indices are non-negative).
         expected_days = set(range(max(0, start_day), self.day + 1))

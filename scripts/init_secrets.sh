@@ -63,5 +63,8 @@ write_secret airflow_admin_password    "${AIRFLOW_ADMIN_PASSWORD:-admin}"
 # catalog.parquet_encryption derives a 256-bit AES key from it via SHA-256, so any
 # high-entropy string works (an existing Fernet-format value stays valid too).
 write_secret delivery_encryption_key   "${DELIVERY_ENCRYPTION_KEY:-$(rand 32)}"
+# Dashboard login (separate from Airflow / MinIO credentials).
+write_secret ml_dashboard_username     "${ML_DASHBOARD_USERNAME:-dashboard}"
+write_secret ml_dashboard_password     "${ML_DASHBOARD_PASSWORD:-dashboard}"
 
 echo "==> Done. ./$SECRETS_DIR is gitignored -- never commit it."

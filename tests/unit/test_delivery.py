@@ -61,6 +61,35 @@ class TestManifest:
         assert "created_at" in manifest
         # columns default to the binding schema.
         assert manifest["columns"] == bundle.DELIVERED_COLUMNS
+        assert "volume_summary" not in manifest
+
+    def test_volume_summary_is_embedded_when_provided(self):
+        volume = bundle.build_volume_summary(
+            anchor_day=2,
+            window_days=3,
+            checksum_rows=[
+                ("landing", "auth", 0, None, 10),
+                ("bronze", "auth", 0, None, 9),
+                ("silver", "auth", 0, None, 8),
+                ("gold", None, 2, 3, 5),
+            ],
+            delivered_record_count=5,
+        )
+        assert volume["event_days"] == [0, 1, 2]
+        assert volume["landing"][0]["record_count"] == 10
+        assert volume["gold"] == {"anchor_day": 2, "window_days": 3, "record_count": 5}
+        assert volume["delivered"] == {"record_count": 5}
+
+        manifest = bundle.build_manifest(
+            schema_version="v1",
+            window_days=3,
+            anchor_day=2,
+            record_count=5,
+            plaintext=b"x",
+            key=SAMPLE_KEY,
+            volume_summary=volume,
+        )
+        assert manifest["volume_summary"] == volume
 
     def test_manifest_bytes_roundtrip(self):
         manifest = bundle.build_manifest(

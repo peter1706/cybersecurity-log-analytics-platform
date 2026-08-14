@@ -2,22 +2,11 @@
 # live in each services/<name>/requirements.txt.
 pytest==8.3.3
 ruff==0.6.9
-# pyspark powers the spark-processor transform unit tests (local mode, no MinIO).
 pyspark==3.5.1
-# Used by the e2e smoke test to read Gold parquet from MinIO.
 boto3==1.35.36
 pyarrow==17.0.0
-# AES-GCM key wrapping for Parquet Modular Encryption on delivered output; used by
-# delivery/ml-mock (via catalog.parquet_encryption) and the encryption roundtrip
-# unit tests. Pinned to the version in the apache-airflow 3.3.0 constraints file
-# (its core requires cryptography>=44.0.3) so this dev/test venv resolves one
-# version for both stacks.
 cryptography==48.0.1
-# Used by Airflow DAG settings loader (also present in the Airflow image).
 PyYAML===6.0.3
-# DAG structural tests (tests/unit/test_daily_pipeline.py) need Airflow + the
-# docker provider. Install separately with the official constraints file, e.g.:
-#   pip install "apache-airflow==3.3.0" \
-#     --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-3.3.0/constraints-3.11.txt"
-#   pip install "apache-airflow-providers-docker==4.5.7"
-# Without them, those tests are skipped via pytest.importorskip.
+pandas==2.2.3
+altair==5.4.1
+narwhals==1.14.2
