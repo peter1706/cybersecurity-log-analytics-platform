@@ -37,7 +37,8 @@ Stop the stack (volumes are kept) with `make down`.
 make install     # one-time: install dev/test tooling
 make test-unit   # fast pytest suite, no Docker required
 make e2e         # runs `make pipeline` then verifies Gold/delivered output in MinIO
-make e2e-full    # backfills a full 7-day window, then verifies the multi-day Gold output
+make e2e-full    # backfills days START..END (default 0..6), then verifies multi-day Gold output
+make e2e-full-14 # backfills the full 14-day demonstration subset (days 0..13)
 ```
 
 `make e2e` and `make e2e-full` build the images and bring up the full Docker Compose
@@ -53,3 +54,15 @@ in total:
 - `make e2e` (single day, day 0): ~1.5M rows across all sources (~7 MB gzipped).
 - `make e2e-full` (7-day backfill, days 0-6): ~9.3M rows across all sources
   (~45 MB gzipped), which seeds a full rolling window for the Silver → Gold step.
+- `make e2e-full-14` (full 14-day backfill, days 0-13): the entire ~19.8M-row
+  demonstration subset (~101 MB gzipped). A manual/local reproducibility check,
+  not run in CI — the `e2e` job (day 0) is CI's e2e gate, on every PR into `main`.
+
+## Published images
+
+`.github/workflows/publish-images.yml` builds every custom image (airflow,
+lanl-simulator, spark-processor, delivery, ml-mock) from the same Dockerfiles
+used locally and publishes them to GHCR on every push to `main` (tag
+`sha-<short-git-sha>`) and on release tags (tag `vX.Y[.Z][-pre]`). `make build`
+never needs registry access — see `.env.example` for how to point the `IMG_*`
+variables at a published tag instead of building locally.
