@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-def _layer_row_total(volume: dict, layer: str) -> int | None:
+def layer_row_total(volume: dict, layer: str) -> int | None:
     """Sum catalog record counts for one layer in a volume_summary snapshot."""
     if layer in ("landing", "bronze", "silver"):
         rows = volume.get(layer) or []
@@ -23,7 +23,7 @@ def phase_volume_rows(volume: dict) -> list[dict[str, object]]:
     totals become ``None`` so the UI can render an em dash.
     """
     layers = ("landing", "bronze", "silver", "gold", "delivered")
-    totals = {name: _layer_row_total(volume, name) for name in layers}
+    totals = {name: layer_row_total(volume, name) for name in layers}
     hops = (
         ("Landing → Bronze", "landing", "bronze"),
         ("Bronze → Silver", "bronze", "silver"),
@@ -51,6 +51,6 @@ def phase_volume_rows(volume: dict) -> list[dict[str, object]]:
 def layer_volume_totals(volume: dict) -> list[dict[str, object]]:
     """List total row counts per medallion/delivery layer."""
     return [
-        {"layer": name, "record_count": _layer_row_total(volume, name)}
+        {"layer": name, "record_count": layer_row_total(volume, name)}
         for name in ("landing", "bronze", "silver", "gold", "delivered")
     ]

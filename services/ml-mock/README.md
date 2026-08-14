@@ -12,13 +12,16 @@ Mock consumer of the `delivered` store, with two run modes from one image:
 - **Dashboard** (`dashboard.py`, always-on Streamlit on host port 8501, configurable
   via `ML_DASHBOARD_PORT`): login-gated consumer UI over the `delivered` bucket.
   Pick a recent delivery from the left rail and read a triage-first cockpit built
-  from the delivered feature columns: risk KPIs (needs attention, highest-risk
-  computer, High count, top unusual theme), a ranked watchlist of unusual
-  computers with filters/search (click a row to explain it), an explainability
-  panel of per-computer drivers, and a pattern band showing the most common
-  drivers and the activity families behind them. Risk buckets are
-  percentile-based within the delivery (top 1% High, next 4% Medium). Delivery information covers schema status, per-source
-  presence, window length and record count (with schema/coverage detail dialogs).
+  from the delivered feature columns, laid out to fit one screen: a full-width row
+  of risk KPIs (needs attention, highest-risk computer, high-risk count, top unusual
+  theme) above a row of delivery context, a ranked watchlist of unusual computers
+  with filters/search (click a row to explain it), and an explainability panel of
+  per-computer drivers for the selected row. The watchlist has a fixed height and
+  scrolls internally so a long list cannot stretch the page. Risk buckets are
+  percentile-based within the delivery (top 1% High, next 4% Medium). Delivery
+  information covers schema status, per-source presence (collapsed into one
+  expandable "Data sources" group), anchor day, window length, raw data records, and
+  aggregated record counts (with schema/coverage detail dialogs).
   Advanced actions load a specific `(window_days, anchor_day)` or trigger the
   Airflow `feature_reprocessing` DAG (Bronze→Silver→Gold→deliver→consume; never
   simulate). Raw feature rows and technical column names are deliberately not
@@ -40,13 +43,14 @@ Mock consumer of the `delivered` store, with two run modes from one image:
   `dashboard` / `dashboard`).
 - Anomaly figures are an in-dashboard robust z-score heuristic for visualization
   only — not the data-science model, and not written back to delivered storage.
-  High/Medium labels are percentile ranks within the open delivery, not absolute
-  production thresholds.
+  Features are ``log1p``-scaled before the median/MAD z-score so heavy-tailed
+  volume counts (e.g. outgoing sign-ins) do not drown every other watchlist
+  reason. High/Medium labels are percentile ranks within the open delivery, not
+  absolute production thresholds.
 - Dashboard modules split by concern: `metrics.py` (aggregations over the
   delivered frame), `charts.py` (Altair specs), `theme.py` (stylesheet + card
   markup), `feature_labels.py` (plain-language names + percentile risk),
-  `watchlist.py` (triage KPIs, ranked unusual-computer rows, driver rows and
-  cross-estate driver/family patterns),
+  `watchlist.py` (triage KPIs, ranked unusual-computer rows and driver rows),
   `partition_view.py`, `schema_view.py` and `volume_view.py` (selection,
   schema-diff and volume helpers). Keeping them free of Streamlit calls is what
   makes them unit testable.
