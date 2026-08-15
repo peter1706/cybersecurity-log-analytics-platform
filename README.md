@@ -20,6 +20,22 @@ for the LANL dataset and demonstration subset, and
 [docs/requirements/](docs/requirements/) for the system-owner and data-science-team
 requirements the platform has been built against.
 
+## Table of contents
+
+- [Showcase of Cybersecurity Log Analytics Platform Dashboard](#showcase-of-cybersecurity-log-analytics-platform-dashboard)
+- [Architecture](#architecture)
+- [Repository layout](#repository-layout)
+- [Running the platform](#running-the-platform)
+  - [Quick start](#quick-start)
+  - [Service endpoints](#service-endpoints)
+  - [Run the pipeline](#run-the-pipeline)
+  - [Stop and clean up](#stop-and-clean-up)
+- [Configuration](#configuration)
+- [Development and testing](#development-and-testing)
+  - [Data volume processed by the e2e tests](#data-volume-processed-by-the-e2e-tests)
+- [Published images](#published-images)
+- [Dataset and citation](#dataset-and-citation)
+
 ## Showcase of Cybersecurity Log Analytics Platform Dashboard
 
 ![ML consumer dashboard](cybersecurity-dashboard.gif)
