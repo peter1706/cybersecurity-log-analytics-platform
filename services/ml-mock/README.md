@@ -1,79 +1,64 @@
-# ml-mock
+# ml-mock service
 
-Mock consumer of the `delivered` store, with two run modes from one image:
+Mock consumer of the `delivered` store. One image but with two entrypoints.
 
-- **`ml_consume` DAG task** (default entrypoint, `consume.py`): after `deliver`,
-  fetches the manifest + encrypted Parquet for an anchor day and decrypts the
-  Parquet Modular Encryption (AES-GCM) — the authenticated decryption is the
-  integrity check, so a tampered/corrupted artifact or wrong key fails the task —
-  then validates the schema exactly against the consumer's feature contract and
-  **rejects** any deviation, checks the record count, then logs a simulated
-  retrain.
-- **Dashboard** (`dashboard.py`, always-on Streamlit on host port 8501, configurable
-  via `ML_DASHBOARD_PORT`): login-gated consumer UI over the `delivered` bucket.
-  Pick a recent delivery from the left rail and read a triage-first cockpit built
-  from the delivered feature columns, laid out to fit one screen: a full-width row
-  of risk KPIs (needs attention, highest-risk computer, high-risk count, top unusual
-  theme) above a row of delivery context, a ranked watchlist of unusual computers
-  with filters/search (click a row to explain it), and an explainability panel of
-  per-computer drivers for the selected row. The watchlist has a fixed height and
-  scrolls internally so a long list cannot stretch the page. Risk buckets are
-  percentile-based within the delivery (top 1% High, next 4% Medium). Delivery
-  information covers schema status, per-source presence (collapsed into one
-  expandable "Data sources" group), anchor day, window length, raw data records, and
-  aggregated record counts (with schema/coverage detail dialogs).
-  Advanced actions load a specific `(window_days, anchor_day)` or trigger the
-  Airflow `feature_reprocessing` DAG (Bronze→Silver→Gold→deliver→consume; never
-  simulate). Raw feature rows and technical column names are deliberately not
-  shown.
+`feature_contract.py` holds the consumer's binding schema (`EXPECTED_COLUMNS`). A test asserts it matches the producer's `COMPUTER_FEATURE_COLUMNS` and delivery's `DELIVERED_COLUMNS`.
 
-`feature_contract.py` holds the consumer's own copy of the binding schema
-(`EXPECTED_COLUMNS`); a unit test asserts it matches the producer's
-`COMPUTER_FEATURE_COLUMNS` and delivery's `DELIVERED_COLUMNS`.
+## Run modes
 
-## Notes
+| | **`ml_consume`** (default) | **Dashboard** |
+|---|---|---|
+| Entrypoint | `consume.py` | `dashboard.py` (Streamlit, host port `ML_DASHBOARD_PORT`, default `8501`) |
+| Role | DAG task after `deliver` | Always-on, login-gated UI over `delivered` |
+| Flow | Fetch manifest + encrypted Parquet for an anchor day → decrypt (Parquet Modular Encryption / AES-GCM; corruption or wrong key fails the task) → exact schema check against the feature contract (any deviation rejects) → record-count check → log a simulated retrain | Pick a recent delivery in the left rail → cockpit from delivered feature columns (one screen) |
 
-- Least privilege for data: MinIO service account scoped to the `delivered`
-  bucket only (never the layer buckets). Credentials come from mounted secrets;
-  the dashboard never talks to the governance catalog DB.
-- The dashboard also joins `airflow-net` solely to call the Airflow REST API
-  (JWT via the Airflow admin principal) to trigger/poll `feature_reprocessing`.
-- Default login credentials are container secrets `ml_dashboard_username` /
-  `ml_dashboard_password` (created by `scripts/init_secrets.sh`, defaults
-  `dashboard` / `dashboard`).
-- Anomaly figures are an in-dashboard robust z-score heuristic for visualization
-  only — not the data-science model, and not written back to delivered storage.
-  Features are ``log1p``-scaled before the median/MAD z-score so heavy-tailed
-  volume counts (e.g. outgoing sign-ins) do not drown every other watchlist
-  reason. High/Medium labels are percentile ranks within the open delivery, not
-  absolute production thresholds.
-- Dashboard modules split by concern: `metrics.py` (aggregations over the
-  delivered frame), `charts.py` (Altair specs), `theme.py` (stylesheet + card
-  markup), `feature_labels.py` (plain-language names + percentile risk),
-  `watchlist.py` (triage KPIs, ranked unusual-computer rows and driver rows),
-  `partition_view.py`, `schema_view.py` and `volume_view.py` (selection,
-  schema-diff and volume helpers). Keeping them free of Streamlit calls is what
-  makes them unit testable.
-- `streamlit_config.toml` is baked into the image as `/app/.streamlit/config.toml`
-  and pins the dark theme + cyan accent. It is not optional styling: on the light
-  base theme Streamlit's own labels and tables render dark-on-dark against the
-  custom stylesheet. Keep its colours in sync with `theme.py`.
+### Dashboard layout
+
+- **Risk KPIs** (full width): needs attention, highest-risk computer, high-risk count, top unusual theme
+- **Delivery context**: schema status, per-source presence (one expandable "Data sources" group), anchor day, window length, raw and aggregated record counts (schema/coverage detail dialogs)
+- **Watchlist**: ranked unusual computers with filters/search; fixed height, internal scroll; click a row to explain it
+- **Explainability**: per-computer drivers for the selected row
+
+Risk buckets are percentile-based within the delivery (top 1% High, next 4% Medium). Advanced actions can load a specific `(window_days, anchor_day)` or trigger Airflow `feature_reprocessing` (Bronze→Silver→Gold→deliver→consume; never simulate). Raw feature rows and technical column names are not shown.
+
+## Security & access
+
+- MinIO service account is scoped to the `delivered` bucket only (never layer buckets). Credentials from mounted secrets; the dashboard never talks to the governance catalog DB.
+- Dashboard joins `airflow-net` only to call the Airflow REST API (JWT via the Airflow admin principal) to trigger/poll `feature_reprocessing`.
+- Login: secrets `ml_dashboard_username` / `ml_dashboard_password` (from `scripts/init_secrets.sh`; defaults `dashboard` / `dashboard`).
+
+## Anomaly heuristic
+
+In-dashboard robust *z-score* for visualization only — not the data-science model, and not written back to delivered storage. Features are `log1p`-scaled before the median/MAD z-score, so heavy-tailed volume counts do not dominate watchlist reasons. High/Medium labels are percentile ranks within the open delivery.
+
+## Modules
+
+| Module | Concern |
+|--------|---------|
+| `metrics.py` | Aggregations over the delivered frame |
+| `charts.py` | Altair specs |
+| `theme.py` | Stylesheet + card markup |
+| `feature_labels.py` | Plain-language names + percentile risk |
+| `watchlist.py` | Triage KPIs, ranked unusual-computer rows, driver rows |
+| `partition_view.py`, `schema_view.py`, `volume_view.py` | Selection, schema-diff, volume helpers |
+
+These stay free of Streamlit calls so they remain unit-testable.
+
+`streamlit_config.toml` is baked in as `/app/.streamlit/config.toml` (dark theme + cyan accent). Required: on Streamlit's light base theme, labels/tables render dark-on-dark against the custom stylesheet. Keep colours in sync with `theme.py`.
 
 ## Configuration
 
-Non-sensitive config is env vars; credentials are container secrets mounted at
-`/run/secrets/<name>` (loaded via `read_secret`, with an env-var fallback for
-local runs).
+Non-sensitive config is `.env` variables; credentials are container secrets at `/run/secrets/<name>` (`read_secret`, with env-var fallback for local runs).
 
 | Var / secret | Kind | Purpose |
 |-----|-----|---------|
 | `MINIO_ENDPOINT` | env | MinIO endpoint URL |
 | `minio_ml_consumer_key`, `minio_ml_consumer_secret` | secret | `delivered`-scoped MinIO service account |
-| `delivery_encryption_key` | secret | master key for decrypting Parquet Modular Encryption |
-| `ml_dashboard_username`, `ml_dashboard_password` | secret | dashboard login |
+| `delivery_encryption_key` | secret | Master key for decrypting Parquet Modular Encryption |
+| `ml_dashboard_username`, `ml_dashboard_password` | secret | Dashboard login |
 | `airflow_admin_password` | secret | Airflow JWT for reprocess triggers (with `AIRFLOW_ADMIN_USER`) |
 | `AIRFLOW_API_URL` | env | Airflow API base URL (default `http://airflow-api-server:8080`) |
 | `AIRFLOW_ADMIN_USER` | env | Airflow username for API auth |
-| `DELIVERED_BUCKET` | env | delivered bucket (default `delivered`) |
-| `ROLLING_WINDOW_DAYS` | env | default `--window-days` / UI default |
-| `ML_DASHBOARD_PORT` | env | host port for the dashboard (default `8501`) |
+| `DELIVERED_BUCKET` | env | Delivered bucket (default `delivered`) |
+| `ROLLING_WINDOW_DAYS` | env | Default `--window-days` / UI default |
+| `ML_DASHBOARD_PORT` | env | Host port for the dashboard (default `8501`) |

@@ -11,11 +11,6 @@ source-native format) as one object per day to the landing bucket:
 
 A multi-day range (``--day-end``) is filtered in a single pass and seeds the
 history a Silver -> Gold rolling-window backfill needs.
-
-No typing or schema is applied here -- that happens at Bronze. Writing the bytes
-as received keeps the raw-landing checkpoint faithful to what a real producer
-would drop. The upload is deterministic and idempotent (fixed object key, fixed
-gzip mtime), so re-running a day overwrites the same object.
 """
 
 import argparse
@@ -38,7 +33,7 @@ SOURCES = ("auth", "proc", "flows", "dns")
 
 
 def landing_lineage(source: str, day: int, record_count: int, schema_version: str) -> Lineage:
-    """Build the raw-landing lineage record for one uploaded source/day (pure)."""
+    """Build the raw-landing lineage record for one uploaded source/day."""
     return Lineage(
         source=source,
         day=day,
@@ -50,10 +45,9 @@ def landing_lineage(source: str, day: int, record_count: int, schema_version: st
 
 
 def landing_checksum(source: str, day: int, blob: bytes, record_count: int) -> Checksum:
-    """Build the raw-landing checksum record over the uploaded object bytes (pure).
+    """Build the raw-landing checksum record over the uploaded object bytes.
 
-    The digest is over the exact bytes uploaded (deterministic: fixed gzip
-    mtime), so the land_to_bronze job can re-read the object and verify it before
+    The digest is over the exact bytes uploaded, so the land_to_bronze job can re-read the object and verify it before
     parsing -- the first link in the integrity chain.
     """
     return Checksum(
@@ -82,8 +76,6 @@ class LandingSimulator:
         self.bucket = bucket
         self.subset_dir = Path(subset_dir)
         self.schema_version = schema_version
-        # Factory returning a governance-catalog client context manager. Default
-        # opens a real connection; tests inject a fake.
         self._catalog_factory = catalog_factory or CatalogClient.connect
         self._client = boto3.client(
             "s3",
@@ -98,8 +90,8 @@ class LandingSimulator:
     def from_env(cls, subset_dir: str | Path) -> "LandingSimulator":
         """Build a simulator from the MinIO endpoint/config and MinIO secrets.
 
-        The endpoint, bucket, and schema version are non-sensitive env vars; the
-        MinIO access/secret keys are container secrets (with an env fallback).
+        The endpoint, bucket, and schema version are non-sensitive env variables; the
+        MinIO access/secret keys are container secrets.
         """
         return cls(
             endpoint=os.environ["MINIO_ENDPOINT"],
@@ -177,8 +169,8 @@ class LandingSimulator:
         With ``day_end`` unset (or equal to ``day``) this replays a single day,
         preserving the original one-object-per-run behavior. With ``day_end >
         day`` it replays the inclusive range ``[day, day_end]`` in a single pass,
-        uploading one landing object per day. Uploads are idempotent (fixed object
-        keys, fixed gzip mtime), so re-running overwrites the same objects.
+        uploading one landing object per day. Uploads are idempotent, so re-running
+        overwrites the same objects.
 
         A single-day request with no matching rows is an error; in a multi-day
         range, days with no rows are skipped with a notice and only a range that

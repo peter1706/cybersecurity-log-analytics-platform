@@ -24,7 +24,7 @@ from catalog import DeliveryManifest
 # consumer/catalog know which scheme protected the artifact.
 ENCRYPTION_SCHEME = "parquet-modular-aes-gcm-v1"
 
-# Delivered schema, in contract order. This is the producer side of the
+# Delivered schema, which acts as a contract between the producer and consumer. This is the producer side of the
 # data-science interface contract; the consumer (ml-mock) keeps its own copy and a
 # unit test asserts both equal the spark-processor's ``COMPUTER_FEATURE_COLUMNS``
 # so the three never drift.

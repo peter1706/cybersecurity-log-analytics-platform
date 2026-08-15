@@ -1,15 +1,15 @@
-# spark-processor
+# spark-processor service
 
 One Spark service running three Airflow-triggered jobs over Delta Lake on
 `s3a://`:
 
-- **(a) landing → Bronze**: parse/validate landed objects, write partitioned Bronze.
+- **(a) landing → Bronze**: parse and validate landed objects, write partitioned Bronze.
 - **(b) Bronze → Silver**: clean, type, conform single events.
 - **(c) Silver → Gold**: per-computer features over the rolling window — one row
-  per computer per **anchor day**. Each run aggregates the anchor day (`--day`)
+  per computer per given **anchor day**. Each run aggregates the anchor day (`--day`)
   plus the preceding `ROLLING_WINDOW_DAYS - 1` days (default 7) and writes them to
   the anchor day's Gold partition. Re-running an anchor day overwrites just that
-  partition (dynamic partition overwrite), so it is idempotent — no double counting.
+  partition.
 
 Job (c) is a single cross-source job:
 
@@ -27,8 +27,7 @@ Job (c) is a single cross-source job:
 - Every task (a)/(b)/(c) re-hashes its upstream input and compares it against the
   checksum recorded at write time (`validate_upstream`), and records its own
   SHA-256 content checksum, lineage row, and (Bronze/Silver) schema-registry row
-  to `postgres-catalog` before returning — the checksum chain the governance
-  catalog is built on.
+  to `postgres-catalog` before returning.
 - Each stage's transform output is cached (it is read up to three times: the
   row-count guard, the write, and the content checksum) and unpersisted in a
   `finally` block; `land_to_bronze` skips input caching since its checksum is
@@ -36,7 +35,7 @@ Job (c) is a single cross-source job:
 - Runs on the data-plane network (`pipeline-net`) using the root MinIO credential
   and the governance catalog, both read from mounted secrets.
 
-## Usage
+## Usage with Python
 
 ```bash
 # single job (one source, one day) -- what the Airflow DAG launches
@@ -58,7 +57,7 @@ already warmed by the image build (see `Dockerfile`).
 
 ## Configuration
 
-Non-sensitive config is env vars; credentials are container secrets mounted at
+Non-sensitive config is `.env` variables; credentials are container secrets mounted at
 `/run/secrets/<name>` (loaded via `read_secret`, with an env-var fallback for
 local runs and tests).
 
