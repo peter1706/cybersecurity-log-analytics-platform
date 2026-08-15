@@ -86,8 +86,7 @@ def test_score_computers_log1p_keeps_sparse_driver_visible():
     )
     result = anomaly.score_computers(df)
     dns_row = result.contributions[
-        (result.contributions["computer_id"] == f"c{n - 1}")
-        & (result.contributions["rank"] <= 1)
+        (result.contributions["computer_id"] == f"c{n - 1}") & (result.contributions["rank"] <= 1)
     ]
     assert not dns_row.empty
     assert dns_row.iloc[0]["feature"] == "dns_lookup_count"
@@ -646,9 +645,7 @@ def _attention_fixture():
         + ["auth_out_failed_count"] * 2
         + ["proc_start_count"] * 95
     ):
-        contrib_rows.append(
-            {"computer_id": f"c{i}", "feature": feat, "abs_z": 3.0, "rank": 1.0}
-        )
+        contrib_rows.append({"computer_id": f"c{i}", "feature": feat, "abs_z": 3.0, "rank": 1.0})
     return scored, pd.DataFrame(contrib_rows)
 
 

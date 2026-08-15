@@ -224,8 +224,7 @@ def _render_schema_body(manifest: dict) -> None:
     expected = feature_contract.EXPECTED_COLUMNS
     diff = schema_view.schema_diff(manifest.get("columns"), expected)
     st.caption(
-        "Delivered columns must match the feature contract exactly — "
-        "same names, same order."
+        "Delivered columns must match the feature contract exactly — " "same names, same order."
     )
 
     summary = pd.DataFrame(
@@ -272,9 +271,7 @@ def _html(markup: str) -> None:
 
 def _render_health(manifest: dict, df: pd.DataFrame) -> None:
     """Render the consolidated delivery-information card (quality + sources + size)."""
-    schema_ok = schema_view.schema_match(
-        manifest.get("columns"), feature_contract.EXPECTED_COLUMNS
-    )
+    schema_ok = schema_view.schema_match(manifest.get("columns"), feature_contract.EXPECTED_COLUMNS)
     source_flags = feature_labels.source_health_flags(df)
     source_rows = [
         (name, "Delivered" if ok else "Missing", "ok" if ok else "bad") for name, ok in source_flags
@@ -320,9 +317,7 @@ def _render_health(manifest: dict, df: pd.DataFrame) -> None:
             )
         )
 
-        rec_label, rec_value, rec_action = st.columns(
-            [2.0, 1.0, 1.35], vertical_alignment="center"
-        )
+        rec_label, rec_value, rec_action = st.columns([2.0, 1.0, 1.35], vertical_alignment="center")
         with rec_label:
             st.markdown("Aggregated records")
         with rec_value:
@@ -344,6 +339,7 @@ def _render_health(manifest: dict, df: pd.DataFrame) -> None:
                     disabled=True,
                     help="Coverage details are not available for this delivery yet.",
                 )
+
 
 def _render_triage(kpis: dict) -> None:
     """Render the four triage headline cards."""

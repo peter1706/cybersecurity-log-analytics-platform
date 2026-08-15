@@ -153,9 +153,7 @@ def standout_sentences(
     if result.scored.empty:
         return []
     risk = assign_risk_levels(result.scored[anomaly.SCORE_COLUMN])
-    attention_ids = set(
-        result.scored.loc[risk.isin(("High", "Medium")), "computer_id"].astype(str)
-    )
+    attention_ids = set(result.scored.loc[risk.isin(("High", "Medium")), "computer_id"].astype(str))
     top = anomaly.top_computers(result.scored, n=n)
     if top.empty:
         return []

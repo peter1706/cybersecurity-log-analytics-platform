@@ -47,8 +47,9 @@ def landing_lineage(source: str, day: int, record_count: int, schema_version: st
 def landing_checksum(source: str, day: int, blob: bytes, record_count: int) -> Checksum:
     """Build the raw-landing checksum record over the uploaded object bytes.
 
-    The digest is over the exact bytes uploaded, so the land_to_bronze job can re-read the object and verify it before
-    parsing -- the first link in the integrity chain.
+    The digest is over the exact bytes uploaded, so the land_to_bronze job can
+    re-read the object and verify it before parsing -- the first link in the
+    integrity chain.
     """
     return Checksum(
         layer="landing",
