@@ -1,6 +1,7 @@
 # Development / CI tooling (lint + tests). Per-service runtime dependencies
 # live in each services/<name>/requirements.txt.
 pytest==8.3.3
+pytest-cov==5.0.0
 ruff==0.6.9
 pyspark==3.5.1
 boto3==1.35.36

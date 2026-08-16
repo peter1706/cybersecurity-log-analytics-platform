@@ -22,8 +22,8 @@ fmt: ## Auto-format with ruff
 
 test: test-unit
 
-test-unit: ## Run unit tests (no docker required)
-	pytest -m "not e2e and not e2e_full"
+test-unit: ## Run unit tests with coverage (no docker required)
+	pytest -m "not e2e and not e2e_full" --cov --cov-report=term-missing
 
 test-e2e: ## Run e2e tests to verify Gold output in MinIO (run `make pipeline` first!)
 	pytest tests/e2e -m e2e

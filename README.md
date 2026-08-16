@@ -172,6 +172,11 @@ make e2e-full-14 # backfills the full 14-day demonstration subset (days 0..13)
 `make e2e` and `make e2e-full` build the images and bring up the full Docker Compose
 stack themselves, so a plain `make test-unit` is enough for quick iteration.
 
+Unit coverage (Codecov / `make test-unit`) measures library and transform code. Streamlit
+UI, service CLIs (`dashboard.py`, `consume.py`, `deliver.py`, `run_job.py`), and
+`scripts/generate_sample_data.py` are omitted; those paths are exercised by the e2e
+pipeline instead.
+
 ### Data volume processed by the e2e tests
 
 The e2e tests run against the pre-filtered LANL subset checked into `data/subset/`
