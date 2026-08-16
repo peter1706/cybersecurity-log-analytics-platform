@@ -114,10 +114,7 @@ def _filter_attention(
     needle = search.strip().lower()
     if needle:
         framed = framed[
-            framed["computer_id"]
-            .astype(str)
-            .str.lower()
-            .str.contains(needle, regex=False)
+            framed["computer_id"].astype(str).str.lower().str.contains(needle, regex=False)
         ]
     return framed.sort_values(anomaly.SCORE_COLUMN, ascending=False)
 
@@ -148,9 +145,7 @@ def watchlist_rows(
     framed = _filter_attention(scored, risk_filter=risk_filter, search=search)
     reasons: dict[str, str] = {}
     if not contributions.empty:
-        rank1 = contributions[
-            pd.to_numeric(contributions["rank"], errors="coerce") <= 1
-        ].copy()
+        rank1 = contributions[pd.to_numeric(contributions["rank"], errors="coerce") <= 1].copy()
         rank1 = rank1.sort_values("rank").drop_duplicates("computer_id", keep="first")
         for _, row in rank1.iterrows():
             reasons[str(row["computer_id"])] = feature_labels.label_for(str(row["feature"]))

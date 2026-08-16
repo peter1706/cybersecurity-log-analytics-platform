@@ -1,5 +1,3 @@
-# Built from the repo root (see docker-compose build.context) so the shared
-# `catalog/` governance client can be layered into the image.
 FROM python:3.11.15-slim-trixie
 
 RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin app

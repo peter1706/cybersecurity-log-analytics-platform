@@ -2,11 +2,9 @@
 """delivery: hand one Gold ``computer_features`` partition to the ML consumer.
 
 Reads the Gold Delta partition for ``(window_days, anchor_day)`` directly with the
-``deltalake`` (delta-rs) reader -- lightweight and partition-correct (it resolves
-the active files from ``_delta_log`` so an overwrite is not double-counted). The
-rows are written as columnar Parquet with Parquet Modular Encryption (AES-GCM,
-footer + all columns) at rest, and uploaded to the ``delivered`` bucket together
-with a delivery manifest.
+``deltalake`` (delta-rs) reader. The rows are written as columnar Parquet with
+Parquet Modular Encryption (AES-GCM,footer + all columns) at rest, and uploaded to
+the ``delivered`` bucket together with a delivery manifest.
 
 Object keys are fixed per partition, so re-delivering an anchor day overwrites the
 same objects without duplicating anything.
@@ -168,9 +166,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    # Exit via os._exit to skip interpreter teardown: the native pyarrow/deltalake
-    # thread pools can abort ("terminate called without an active exception",
-    # exit 133) during static destruction, which would otherwise fail this task.
     try:
         main()
     except Exception as exc:  # noqa: BLE001 - surface a clear failure to Airflow

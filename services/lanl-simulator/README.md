@@ -1,4 +1,4 @@
-# lanl-simulator
+# lanl-simulator service
 
 External producer. Replays the LANL source subset (`data/subset/*.txt.gz`) as
 **daily raw batches**, writing one object per source per day to the MinIO
@@ -9,14 +9,12 @@ Replays a single day (`--day N`) or, with `--day-end M`, an inclusive range
 Silver → Gold rolling-window backfill needs.
 
 Object key: `landing/<source>/day=<DD>/<source>-<DDD>.csv.gz`. No typing or
-schema is applied — that happens at Bronze; the raw bytes are uploaded verbatim
-(still gzip-compressed, source-native format) so the landing checkpoint stays
-faithful to what a real producer would drop.
+schema is  at this stage.
 
 ## Notes
 
 - The upload is deterministic and idempotent: fixed object key, fixed gzip
-  mtime, so re-running a day overwrites the same object rather than creating a
+  mtime, so re-running one day overwrites the same object rather than creating a
   duplicate.
 - Records a landing lineage row and a SHA-256 checksum (over the exact uploaded
   bytes) to `postgres-catalog` for every `(source, day)` — the first link in the
@@ -39,7 +37,7 @@ object per day, per source).
 
 ## Configuration
 
-Non-sensitive config is env vars; credentials are container secrets mounted at
+Non-sensitive config is `.env` variables; credentials are container secrets mounted at
 `/run/secrets/<name>` (loaded via `read_secret`, with an env-var fallback for
 local runs and tests).
 
@@ -54,7 +52,7 @@ local runs and tests).
 
 ## Testing
 
-The day/day-range row-selection logic and the landing lineage/checksum record
+The day/day-range row-selection logic and the landing lineage and checksum record
 builders are unit-tested against the checked-in subset fixtures (no Docker) —
 see `tests/unit/test_simulator.py`. End-to-end landing → Bronze behaviour is
 covered by `tests/e2e/test_pipeline_smoke.py` (`make e2e`).

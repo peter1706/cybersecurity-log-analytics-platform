@@ -43,3 +43,32 @@ markers = [
     "e2e_full: heavyweight full 7-day rolling-window e2e; run via 'make e2e-full' (excluded from the unit and fast e2e suites)",
 ]
 addopts = "-ra"
+
+[tool.coverage.run]
+# Paths that unit tests exercise (hyphenated service dirs are source trees).
+# UI/CLI/script entrypoints are omitted — covered operationally by e2e, not unit tests.
+source = [
+    "catalog",
+    "airflow/dags",
+    "services/delivery",
+    "services/lanl-simulator",
+    "services/ml-mock",
+    "services/spark-processor",
+]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+    "services/ml-mock/dashboard.py",
+    "services/ml-mock/consume.py",
+    "services/delivery/deliver.py",
+    "services/spark-processor/run_job.py",
+    "scripts/generate_sample_data.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+
+[tool.coverage.xml]
+output = "coverage.xml"

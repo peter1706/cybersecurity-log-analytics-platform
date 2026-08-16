@@ -1,36 +1,21 @@
-# delivery
+# delivery service
 
-Hands one Gold `computer_features` partition to the ML consumer. Launched once per
-anchor day by the `daily_pipeline` DAG (`deliver` task), after `silver_to_gold`.
+Hands one Gold `computer_features` partition to the ML-mock consumer of the platform. This is launched once per anchor day by the `daily_pipeline` DAG (`deliver` task), after the `silver_to_gold` task.
 
 For anchor day `--day` and window `--window-days` (default `ROLLING_WINDOW_DAYS`) it:
 
-1. reads the Gold Delta partition `(window_days, anchor_day)` with the `deltalake`
-   (delta-rs) reader — partition-correct via `_delta_log`, no double counting;
-2. selects the binding contract columns (`bundle.DELIVERED_COLUMNS`) and writes
-   them as columnar Parquet with Parquet Modular Encryption (AES-GCM);
-3. uploads the encrypted Parquet plus a delivery manifest to the `delivered`
-   bucket under `computer_features/window_days=<w>/anchor_day=<dd>/`.
-
-Fixed object keys make re-delivery idempotent.
+1. Reads the Gold Delta partition `(window_days, anchor_day)` with the `deltalake` (delta-rs) reader — partition-correct via `_delta_log`;
+2. Selects the binding contract columns (`bundle.DELIVERED_COLUMNS`) and writes only them as columnar Parquet with Parquet Modular Encryption using Advanced Encription Standard in Galois/Counter Mode (AES-GCM);
+3. Uploads the encrypted Parquet plus a delivery manifest to the `delivered` bucket under `computer_features/window_days=<w>/anchor_day=<dd>/`.
 
 ## Notes
 
-- Encryption at rest is Parquet Modular Encryption (AES-GCM, footer + all
-  columns) via `catalog.parquet_encryption`; the master key is the
-  `delivery_encryption_key` secret. AES-GCM is authenticated, so tampering is
-  detected on the consumer's read.
-- The manifest records the scheme + key id and the SHA-256 of the *pre-encryption*
-  Parquet as the Gold → delivered audit-chain checksum; it is written into the
-  `delivered` bucket alongside the data and to the governance catalog.
-- Runs on the data-plane network using the root MinIO credential (read from a
-  mounted secret).
+- Encryption at rest is Parquet Modular Encryption (AES-GCM, footer + all columns) via `catalog.parquet_encryption`; the master key is the `delivery_encryption_key` secret. AES-GCM is authenticated, so any manipulation is detected on the consumer's read.
+- The manifest records the scheme + key id and the SHA-256 of the *pre-encryption* Parquet as a Gold to delivered audit-chain checksum. This is written into the `delivered` bucket alongside the data and to the governance catalog.
 
 ## Configuration
 
-Non-sensitive config is env vars; credentials are container secrets mounted at
-`/run/secrets/<name>` (loaded via `read_secret`, with an env-var fallback for
-local runs).
+Non-sensitive config is within `.env` variables; credentials are container secrets mounted at `/run/secrets/<name>` (loaded via `read_secret`, with an env-var fallback for local runs).
 
 | Var / secret | Kind | Purpose |
 |-----|-----|---------|
